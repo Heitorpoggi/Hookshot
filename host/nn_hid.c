@@ -162,6 +162,7 @@ static int mouse_stick(int32_t *rx, int32_t *ry, int pointing) {
 }
 
 static int game_in_front(void) {
+    if (getenv("HOOKSHOT_AUTOTEST") && atoi(getenv("HOOKSHOT_AUTOTEST")) != 0) return 1;
     DWORD pid = 0;
     HWND w = GetForegroundWindow();
     if (w) GetWindowThreadProcessId(w, &pid);

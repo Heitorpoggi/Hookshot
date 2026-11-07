@@ -67,7 +67,7 @@ typedef struct {
     int slot_last[MAX_SLOTS];        /* the stream's last picture (the submission marked last, all decoded) */
     Picture queue[MAX_QUEUE];
     int qhead, qn;
-    int eos;                         /* the last submission is in and decoded: an empty queue is the end */
+    int eos, input_eos;              /* the last submission is in and decoded: an empty queue is the end */
     Pending *phead, *ptail;          /* submissions not decoded yet, oldest first */
     int64_t submits, acquires, last_pts;
     SRWLOCK lock;
@@ -346,7 +346,10 @@ static void dec_submit(Ctx *c) {
         }
     }
     d->submits++;
-    if (ARG(5) & 1) pending_push(d, NULL);
+    if (ARG(5) & 1) {
+        pending_push(d, NULL);
+        d->input_eos = 1;
+    }
     if (video_log() && (d->submits <= 8 || (ARG(5) & 1)))
         hos_log("video: submit %lld (%llu bytes, pts %lld%s)", (long long)d->submits, (unsigned long long)ARG(3),
                 (long long)ARG(4), (ARG(5) & 1) ? ", last" : "");
@@ -363,6 +366,7 @@ static void dec_flush(Ctx *c) {
         for (int i = 0; i < d->qn; i++) picture_free(&d->queue[(d->qhead + i) % MAX_QUEUE]);
         d->qhead = d->qn = 0;
         d->eos = 0;
+        d->input_eos = 0;
         for (int i = 0; i < MAX_SLOTS; i++) d->slot_last[i] = 0;
         ReleaseSRWLockExclusive(&d->lock);
     }
@@ -403,7 +407,7 @@ static void dec_acquire(Ctx *c) {
         return;
     }
     d->acquires++;
-    if (getenv("HOOKSHOT_AUTOTEST") && d->acquires >= 180 && d->phead) {
+    if (getenv("HOOKSHOT_AUTOTEST") && d->input_eos && d->acquires >= 180 && d->phead) {
         pending_free(d);
         d->eos = 1;
         if (d->qn) {
@@ -411,8 +415,8 @@ static void dec_acquire(Ctx *c) {
             if (d->last_pts > lastp->pts) lastp->pts = d->last_pts;
             lastp->last = 1;
         }
-        hos_log("video: HOOKSHOT_AUTOTEST fast-forwarded movie to EOS after %lld frames (last_pts %lld)",
-                (long long)d->acquires, (long long)d->last_pts);
+        hos_log("video: HOOKSHOT_AUTOTEST fast-forwarded movie to EOS after %lld frames (last_pts %lld, qn %d)",
+                (long long)d->acquires, (long long)d->last_pts, d->qn);
     }
     if (!d->qn) {   /* (nothing decoded: the buffer's last picture again; after the last submission, as the last) */
         d->busy[slot] = 1;
