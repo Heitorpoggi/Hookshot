@@ -1710,6 +1710,8 @@ struct Pass {
 };
 thread_local Pass pass;
 thread_local bool work_since_barrier = false;   // (GPU work recorded since the last full barrier: a dispatch orders after it)
+thread_local uint64_t last_compute_key = 0;
+thread_local VkPipeline last_compute_pipeline = VK_NULL_HANDLE;
 // what the command buffer has bound (draws skip what is already there)
 thread_local bool last_desc_valid = false;
 thread_local const Program* last_desc_prog = nullptr;
@@ -1800,6 +1802,7 @@ void begin_pass(VkCommandBuffer cmd, const Targets& at) {
     end_pass(cmd);
     pass_barrier(cmd);   // (what the pass before wrote, and the transfers before it)
     work_since_barrier = true;
+    last_compute_key = 0;
     VkRenderingAttachmentInfo ca[8]{};
     bool marks = !texture_marked(at.depth);
     for (int i = 0; i < at.n && !marks; i++) marks = !texture_marked(at.color[i]);
@@ -2281,6 +2284,8 @@ void draw_begin_recording(int slot, VkCommandBuffer cmd, uint64_t value) {
     cur = &r;
     pass = Pass{};
     work_since_barrier = false;
+    last_compute_key = 0;
+    last_compute_pipeline = VK_NULL_HANDLE;
     last_dyn_valid = false, last_desc_valid = false, last_vb_valid = false, last_pipeline = VK_NULL_HANDLE;
     descriptors_disturbed();
     static thread_local uint64_t hits_value = ~0ull;   // (resolved targets last a submission, through its parts: no CPU write is
@@ -3734,7 +3739,9 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
     // (dispatches after other work wait for it: the WebGPU renderer's dispatches were ordered the same way by
     // wgpu's own tracking, and MKW's compute chains read what the one before wrote)
     static const bool no_order = getenv("RX_VK_NO_DISPATCH_ORDER") != nullptr;
-    if (work_since_barrier && !no_order) compute_barrier(cmd);
+    static const bool strict_order = getenv("RX_VK_STRICT_DISPATCH_ORDER") != nullptr;
+    if (work_since_barrier && !no_order && (strict_order || p.key != last_compute_key)) compute_barrier(cmd);
+    last_compute_key = p.key;
     work_since_barrier = true;
     if (!p.stages.empty() && p.stages[0].info.uses_cooperative_matrix) {   // (the game's networks, once each: what they read and write)
         static std::mutex mu;
@@ -3752,7 +3759,10 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
     if (taau_stand_in(cmd, s, p)) return void(st_dispatches++);
     if (!p.compute_pipeline) SKIP_HERE();
     dump_ssbos(cmd, p, "before");
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p.compute_pipeline);
+    if (p.compute_pipeline != last_compute_pipeline) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p.compute_pipeline);
+        last_compute_pipeline = p.compute_pipeline;
+    }
     if (!bind_descriptors(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p)) SKIP_HERE();
     push_constants(cmd, p, nullptr);
     gprof_begin(cmd);
