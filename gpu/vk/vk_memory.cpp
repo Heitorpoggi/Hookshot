@@ -1495,11 +1495,15 @@ void mirrors_give_back(uint64_t want_bytes) {   // (pools_mu held)
     }
     std::vector<Pool*> idle;
     for (auto& [lo, p] : imported)
-        if (p.mstate == Pool::MIRROR_ON && mirror_epoch - p.bound_epoch > kIdleEpochs && p.last_value <= mem_completed)
+        if (p.mstate == Pool::MIRROR_ON && mirror_epoch - p.bound_epoch > (want_bytes ? 15 : kIdleEpochs) && p.last_value <= mem_completed)
             idle.push_back(&p);
     std::sort(idle.begin(), idle.end(), [](const Pool* a, const Pool* b) { return a->bound_epoch < b->bound_epoch; });
-    for (Pool* p : idle)
-        if (mirror_epoch - p->bound_epoch > kLongIdle || mirror_bytes + want_bytes > mirror_budget()) mirror_free(*p);
+    for (Pool* p : idle) {
+        if (mirror_epoch - p->bound_epoch > kLongIdle || mirror_bytes + want_bytes > mirror_budget()) {
+            mirror_free(*p);
+            if (want_bytes && mirror_bytes + want_bytes <= mirror_budget()) break;
+        }
+    }
     static int64_t logged_at;
     if (st_mirrors_freed / 16 != logged_at) {
         logged_at = st_mirrors_freed / 16;

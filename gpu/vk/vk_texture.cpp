@@ -1329,7 +1329,7 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
         // less: BC3's 8 keep what they have) from 2 MB as RGBA8 (RX_VK_ASTC_BC_MB), the finer ones (UI, characters)
         // only from 64 MB)
         static const uint64_t low = (uint64_t)(getenv("RX_VK_ASTC_BC_MB") ? atoi(getenv("RX_VK_ASTC_BC_MB")) : 2) << 20;
-        const uint64_t min_bytes = bw * bh >= 36 ? low : 64ull << 20;
+        const uint64_t min_bytes = bw * bh >= 36 ? low : (4ull << 20);
         uint64_t px = 0;
         for (uint32_t l = 0; l < x.levels; l++)
             px += (uint64_t)std::max(1u, x.width >> l) * std::max(1u, x.height >> l);
@@ -2636,7 +2636,7 @@ void texture_frame(uint64_t completed) {
     std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
     std::vector<Texture*> gone;
     for (auto& [last, tex] : order) {
-        if ((!sweep && total_bytes <= budget / 8 * 7) || frame_no - last < (sweep ? 120u : 8u)) break;
+        if ((!sweep && total_bytes <= budget / 8 * 7) || frame_no - last < (sweep ? 120u : 30u)) break;
         if (tex->last_value > completed) continue;
         // (nor what the GPU wrote and the game still has: the image is its only copy, and one made again over that
         // storage started empty or from stale memory: a sky or course texture drawn once, garbage from then on.
@@ -2644,8 +2644,8 @@ void texture_frame(uint64_t completed) {
         static const bool evict_rendered = getenv("RX_VK_EVICT_RENDERED") != nullptr;
         // (one unused for 3600 presents (a minute) goes: a course left behind; the game draws it again when it comes
         // back to that course. Without it a course change kept 1.4 GB arrays and VRAM ran over)
-        // (600 presents when the process is over what the driver allows: then the driver pages VRAM to system memory)
-        const uint64_t keep_rendered = known && used > allowed ? 600 : 3600;
+        // (120 presents on <= 4.6 GB cards to quickly free room on scene transitions like leaving Link's house)
+        const uint64_t keep_rendered = (known && allowed <= (4600ull << 20)) ? 120 : (known && used > allowed ? 600 : 3600);
         // (hookshot) a render target another image has since been drawn over (same storage, another size or format:
         // OoT's dynamic resolution makes a new set at each size in the same pool memory) holds nothing any more: it
         // goes like any other. Kept, they were 3.6 GB of 4.5 GB rendered, VRAM near the driver's limit, and the

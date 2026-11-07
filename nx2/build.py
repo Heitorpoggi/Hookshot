@@ -220,7 +220,7 @@ WRITE_TRACK = [] if os.environ.get("RX_SOFT_WRITE_WATCH") == "0" else ["-DA64_WR
 # MOVBE; Haswell and Zen 1 on). With FMA the FPX1 fast paths cover double-precision FMA (RECOMP_FPX_FMA64; it took
 # the exact software body on baseline x86-64) and the bit counts are single instructions. No contraction, so a C
 # expression is rounded as written (the exact bodies and FPX1's proofs assume it). RX_MARCH=x86-64: the old baseline
-CPU = ["-march=" + os.environ.get("RX_MARCH", "x86-64-v3"), "-ffp-contract=off"]
+CPU = ["-march=" + os.environ.get("RX_MARCH", "alderlake"), "-ffp-contract=off"]
 
 
 def flags(gen, rt64, opt, polls):
