@@ -176,12 +176,20 @@ def ffmpeg_linux():
         libs = subprocess.run(["pkg-config", "--libs"] + names, capture_output=True, text=True, check=True).stdout.split()
         return cflags, libs
     except (OSError, subprocess.CalledProcessError):
-        return None
+        pass
+    cpm_ff = cpm_package("ffmpeg")
+    if cpm_ff and os.path.isdir(os.path.join(cpm_ff, "include")):
+        inc = os.path.join(cpm_ff, "include")
+        lib_dir = os.path.join(kit.WORK, "lib")
+        link_flags = (["-L" + lib_dir] if os.path.isdir(lib_dir) else []) + ["-l" + l for l in FFMPEG_LIBS] + ["-ldav1d", "-lm", "-lpthread"]
+        return ["-I" + inc], link_flags
+    return None
 
 
 if LINUX:
     FFMPEG_LX = ffmpeg_linux()
     FFMPEG = None
+
 
 
 # the soft write watch (rt/a64.h A64_MARK): lifted stores mark their 4 KB page, and the renderer reads the marks
