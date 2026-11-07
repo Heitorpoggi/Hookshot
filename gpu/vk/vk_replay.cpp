@@ -2250,7 +2250,20 @@ void do_present(const nvn_tex* t, const int crop[4]) {
             std::string latest_path = dir_str + "/latest.png";
             std::thread([px, path, latest_tmp, latest_path, at_present] {
                 write_png(path.c_str(), px->data(), kShotW, kShotH);
-                write_png(latest_tmp.c_str(), px->data(), kShotW, kShotH);
+                constexpr uint32_t lw = kShotW / 2, lh = kShotH / 2;
+                std::vector<uint8_t> half((size_t)lw * lh * 4);
+                for (uint32_t y = 0; y < lh; y++) {
+                    for (uint32_t x = 0; x < lw; x++) {
+                        const uint8_t* p00 = px->data() + ((size_t)(y * 2) * kShotW + (x * 2)) * 4;
+                        const uint8_t* p01 = p00 + 4;
+                        const uint8_t* p10 = p00 + (size_t)kShotW * 4;
+                        const uint8_t* p11 = p10 + 4;
+                        uint8_t* dst = half.data() + ((size_t)y * lw + x) * 4;
+                        for (int c = 0; c < 4; c++)
+                            dst[c] = (uint8_t)((p00[c] + p01[c] + p10[c] + p11[c]) >> 2);
+                    }
+                }
+                write_png(latest_tmp.c_str(), half.data(), lw, lh);
                 std::rename(latest_tmp.c_str(), latest_path.c_str());
                 logf("vk: present %lld written to %s (and %s)", (long long)at_present, path.c_str(), latest_path.c_str());
             }).detach();

@@ -212,17 +212,18 @@ static void parse_script(void) {
     const char *script = getenv("HOS_INPUT_SCRIPT");
     if (!script && getenv("HOOKSHOT_AUTOTEST") && atoi(getenv("HOOKSHOT_AUTOTEST")) != 0) {
         /* Default autotest sequence (relative to first rendered frame):
-           - 2s..28s: PLUS and A pulses to pass title screen, select save slot 1, confirm name/new game, and advance intro dialogue
-           - 29s..180s: periodic A + PLUS pulses and 3D movement (LUP/LRIGHT/LDOWN + camera rotation) in Kokiri Forest / Link's House */
+           - 4s..44s: clean A pulses (350ms hold) + occasional PLUS to select "Novo jogo", confirm player name, start game, and advance dialogue
+           - 45s..90s: A pulses + 3D movement in Kokiri Forest / Link's House */
         script =
-            "2.0:PLUS,3.5:A,5.0:PLUS,6.5:A,8.0:A,9.5:A,11.0:PLUS,12.5:A,14.0:A,15.5:A,17.0:PLUS,18.5:A,20.0:A,"
-            "21.5:A,23.0:PLUS,24.5:A,26.0:A,27.5:A,29.0:A,30.5:A,"
-            "32.0:LUP/3000,32.5:A,34.0:A,35.5:LRIGHT+RRIGHT/2500,36.0:A,37.5:A,"
-            "39.0:LUP/3000,39.5:A,41.0:A,42.5:LLEFT+RLEFT/2500,43.0:A,44.5:A,"
-            "46.0:LUP/4000,46.5:A,48.0:A,50.5:LDOWN+RRIGHT/2500,51.0:A,52.5:A,"
-            "54.0:LUP/4000,54.5:A,56.5:A,58.5:LRIGHT/3000,59.0:A,61.0:A,"
-            "62.5:LUP+RRIGHT/4000,63.0:A,65.0:A,67.0:LUP/4000,68.0:A,70.0:A,"
-            "72.0:LLEFT/3000,73.0:A,75.5:LUP/5000,76.0:A,78.0:A,81.0:LRIGHT+RRIGHT/4000,82.0:A,85.0:LUP/5000";
+            "4.0:A/350,5.5:A/350,7.0:A/350,8.5:A/350,10.0:A/350,11.5:A/350,13.0:A/350,14.5:PLUS/350,"
+            "16.0:A/350,17.5:A/350,19.0:A/350,20.5:PLUS/350,22.0:A/350,23.5:A/350,25.0:A/350,26.5:PLUS/350,"
+            "28.0:A/350,29.5:A/350,31.0:A/350,32.5:PLUS/350,34.0:A/350,35.5:A/350,37.0:A/350,38.5:A/350,"
+            "40.0:A/350,41.5:A/350,43.0:A/350,44.5:A/350,"
+            "46.0:LUP/3000,46.5:A/350,48.0:A/350,49.5:A/350,51.0:LRIGHT+RRIGHT/2500,51.5:A/350,53.0:A/350,"
+            "54.5:A/350,56.0:LUP/3500,56.5:A/350,58.0:A/350,59.5:A/350,61.0:LLEFT+RLEFT/2500,61.5:A/350,"
+            "63.0:A/350,64.5:A/350,66.0:LUP/4000,66.5:A/350,68.0:A/350,69.5:A/350,71.0:LDOWN+RRIGHT/2500,"
+            "71.5:A/350,73.0:A/350,74.5:A/350,76.0:LUP/4000,76.5:A/350,78.0:A/350,79.5:A/350,"
+            "81.0:LRIGHT/3000,81.5:A/350,83.0:A/350,84.5:A/350,86.0:LUP/4000";
         hos_log("hid: HOOKSHOT_AUTOTEST=1 active (starting input sequence after first presented frame)");
     }
     parse_presses(script, 0, 0);
@@ -410,14 +411,9 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
     *buttons = 0;
     memset(stick, 0, 4 * sizeof *stick);
     scripted_input(buttons, stick);
-    /* A scripted run (a test) takes no input from the player's devices until 5 s after its last press (a variable
-       left set in a shell no longer leaves the game without controls), and otherwise the pads count only
-       while the game's window is in front, like the keyboard: XInput is global, so a test run in the background
-       used to follow the player's pad (and pressed things in its own menus). */
-    /* (hookshot) The player's devices count during a script too (the user plays along in test runs, 2026-11-05):
-       the presses add to theirs. HOS_INPUT_EXCLUSIVE=1: the script alone until 5 s after its last press, as before */
     static int exclusive = -1;
-    if (exclusive < 0) exclusive = getenv("HOS_INPUT_EXCLUSIVE") != NULL;
+    if (exclusive < 0)
+        exclusive = getenv("HOS_INPUT_EXCLUSIVE") != NULL || (getenv("HOOKSHOT_AUTOTEST") && atoi(getenv("HOOKSHOT_AUTOTEST")) != 0);
     if ((exclusive && npresses > 0 && (hos_now_ns() - script_t0) / 1000000 < script_end_ms + 5000) || !game_in_front())
         return;
     pads_read(buttons, stick);

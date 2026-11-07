@@ -227,6 +227,7 @@ void hos_display_loop(void) {
             do {
                 switch (e.type) {
                 case EV_QUIT:
+                    if (getenv("HOOKSHOT_AUTOTEST") && atoi(getenv("HOOKSHOT_AUTOTEST")) != 0) break;
                     hos_log("display: window closed, exiting");
                     hos_log_flush();
                     ExitProcess(0);
@@ -242,6 +243,7 @@ void hos_display_loop(void) {
                         if (what == WE_FOCUS_LOST) hos_posix_window[0] = 0;
                         mouse_capture(0);
                     } else if (what == WE_CLOSE) {
+                        if (getenv("HOOKSHOT_AUTOTEST") && atoi(getenv("HOOKSHOT_AUTOTEST")) != 0) break;
                         hos_log("display: window closed, exiting");
                         hos_log_flush();
                         ExitProcess(0);
