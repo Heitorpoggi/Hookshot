@@ -499,7 +499,9 @@ def main():
             shutil.copyfile(sdl, sdl_dst)
     if vk_prebuilt and a.standalone and not a.only:
         import shutil
-        shutil.copyfile(vk_prebuilt, os.path.join(out, VK_LIB))
+        dst_vk = os.path.join(out, VK_LIB)
+        if os.path.abspath(vk_prebuilt) != os.path.abspath(dst_vk):
+            shutil.copyfile(vk_prebuilt, dst_vk)
     if vk_jobs:   # (hookshot_vk.dll beside the exe: loaded by host/rx_backend.c with RX_BACKEND=vulkan)
         vdll = os.path.join(out, VK_LIB)
         vrsp = os.path.join(out, "vk_objs.rsp")
