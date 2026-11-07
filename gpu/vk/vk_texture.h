@@ -148,6 +148,7 @@ VkBufferView texel_buffer_view(const nvn_tex* t, const nvn_view* v, bool storage
 Texture* texture_for_present(const nvn_tex* t);
 /// Ages the cache by one present; images nothing used for a while go, after the work that last read them
 void texture_frame(uint64_t completed_value);
+void texture_evict_vram(uint64_t needed_bytes, bool force);
 void texture_released(const nvn_tex* t);
 /// (diagnostics: what guest memory holds of a texture's storage now, level by level, logged)
 void texture_log_guest(const Texture* t);
@@ -165,6 +166,8 @@ void texture_unswizzle_stats(int64_t* bytes, int64_t* ns);
 uint64_t texture_bytes();
 /// A full memory barrier (all commands, all accesses): what separates dependent work for now
 void full_barrier(VkCommandBuffer cmd);
+void compute_barrier(VkCommandBuffer cmd);
+void pass_barrier(VkCommandBuffer cmd);
 void texture_stats(int64_t* uploads, int64_t* astc_gpu, int64_t* bytes_uploaded);
 /// RX_VK_DUMP_TEX: the textures uploaded next written to that folder as PPM (diagnostics)
 void texture_read_texels(const nvn_tex* t, unsigned level, unsigned layer0, const NVNcopyRegion* r, uint8_t* dst,

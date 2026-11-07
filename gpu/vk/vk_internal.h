@@ -183,6 +183,9 @@ PFN_vkGetInstanceProcAddr instance_proc();   // vk_main.cpp
 
 bool create_swapchain(uint32_t width, uint32_t height);
 bool replay_start();                          // vk_replay.cpp
+uint64_t completed();                         // vk_replay.cpp
+void wait_value(uint64_t v);                  // vk_replay.cpp
+void texture_evict_vram(uint64_t needed_bytes = 0, bool force = false); // vk_texture.cpp
 bool precompile_wanted();                     // vk_draw.cpp
 void precompile_run(void (*progress)(size_t done, size_t total));
 void prepare_run(void (*progress)(size_t done, size_t total));

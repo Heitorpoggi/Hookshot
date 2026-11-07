@@ -74,6 +74,8 @@ void recording_wait(Recording& r) {
     r.submitted = false;
 }
 
+} // namespace
+
 uint64_t completed() {
     uint64_t v = 0;
     vkGetSemaphoreCounterValue(dev.device, timeline, &v);
@@ -86,6 +88,8 @@ void wait_value(uint64_t v) {
     wi.pValues = &v;
     vkWaitSemaphores(dev.device, &wi, UINT64_MAX);
 }
+
+namespace {
 
 int64_t st_wait_ns;   // (time the replay waited for a recording slot: the GPU behind)
 
@@ -856,7 +860,7 @@ constexpr int kMaxParts = 32;
 constexpr int kMaxBatch = 6;   // (three recording threads: more segments only took slots and submits)
 
 void maybe_split(VkCommandBuffer& cmd) {
-    static const int64_t every = getenv("RX_VK_CHUNK") ? atoll(getenv("RX_VK_CHUNK")) : 512;
+    static const int64_t every = getenv("RX_VK_CHUNK") ? atoll(getenv("RX_VK_CHUNK")) : 4096;
     if (!rec_cur || every <= 0 || ++part_work < every || rec_parts + 1 >= kMaxParts || dump_on()) return;
     end_pass(cmd);
     flush_ub_updates(cmd);

@@ -80,6 +80,27 @@ bool create_image(const VkImageCreateInfo& ci, VkImage& image, VmaAllocation& al
         if (vmaCreateImage(vma, &ci, &pai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
     }
     if (vmaCreateImage(vma, &ci, &ai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
+    // (hookshot) DEVICE_LOCAL failed: evict cached textures from VRAM to make room
+    const uint64_t approx_bytes = (uint64_t)ci.extent.width * ci.extent.height * ci.extent.depth * ci.arrayLayers * 4;
+    texture_evict_vram(approx_bytes, false);
+    if (VmaPool pool = no_pool ? VK_NULL_HANDLE : images_pool()) {
+        VmaAllocationCreateInfo pai = ai;
+        pai.pool = pool;
+        pai.usage = VMA_MEMORY_USAGE_UNKNOWN;
+        if (vmaCreateImage(vma, &ci, &pai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
+    }
+    if (vmaCreateImage(vma, &ci, &ai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
+    // (hookshot) Priority of VRAM for Render Targets & Depth Buffers:
+    // Never allow render targets, depth attachments, or large images (>= 1024) to fall back into system memory!
+    const bool is_critical = (ci.usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) ||
+                             ci.extent.width >= 1024 || ci.extent.height >= 1024;
+    if (is_critical) {
+        texture_evict_vram(approx_bytes, true);
+        if (vmaCreateImage(vma, &ci, &ai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
+        logf("vk: CRITICAL: VRAM allocation failed for %ux%u (format %d, usage 0x%x) - REFUSING system memory fallback!",
+             ci.extent.width, ci.extent.height, (int)ci.format, (unsigned)ci.usage);
+        return false;
+    }
     // (hookshot) VRAM is full (a 4 GB card at a high resolution, #96): an image left unmade is a black screen, so it goes
     // to system memory instead, slow but drawn
     if (getenv("RX_VK_IMAGES_VRAM_ONLY")) return false;

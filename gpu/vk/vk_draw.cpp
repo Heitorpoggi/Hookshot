@@ -1798,7 +1798,7 @@ void begin_pass(VkCommandBuffer cmd, const Targets& at) {
     for (int i = 0; i < at.n && same; i++) same = pass.color[i] == at.color_view[i];
     if (same) return;
     end_pass(cmd);
-    full_barrier(cmd);   // (what the pass before wrote, and the transfers before it)
+    pass_barrier(cmd);   // (what the pass before wrote, and the transfers before it)
     work_since_barrier = true;
     VkRenderingAttachmentInfo ca[8]{};
     bool marks = !texture_marked(at.depth);
@@ -3734,7 +3734,7 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
     // (dispatches after other work wait for it: the WebGPU renderer's dispatches were ordered the same way by
     // wgpu's own tracking, and MKW's compute chains read what the one before wrote)
     static const bool no_order = getenv("RX_VK_NO_DISPATCH_ORDER") != nullptr;
-    if (work_since_barrier && !no_order) full_barrier(cmd);
+    if (work_since_barrier && !no_order) compute_barrier(cmd);
     work_since_barrier = true;
     if (!p.stages.empty() && p.stages[0].info.uses_cooperative_matrix) {   // (the game's networks, once each: what they read and write)
         static std::mutex mu;
