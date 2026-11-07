@@ -67,7 +67,7 @@ typedef struct {
     int slot_last[MAX_SLOTS];        /* the stream's last picture (the submission marked last, all decoded) */
     Picture queue[MAX_QUEUE];
     int qhead, qn;
-    int eos, input_eos;              /* the last submission is in and decoded: an empty queue is the end */
+    int eos, input_eos, flushed;     /* the last submission is in and decoded: an empty queue is the end */
     Pending *phead, *ptail;          /* submissions not decoded yet, oldest first */
     int64_t submits, acquires, last_pts;
     SRWLOCK lock;
@@ -334,6 +334,7 @@ static void dec_submit(Ctx *c) {
         return;
     }
     AcquireSRWLockExclusive(&d->lock);
+    d->flushed = 0;
     if (ARG(2) && ARG(3)) {
         AVPacket *pkt = av_packet_alloc();
         if (pkt && av_new_packet(pkt, (int)ARG(3)) == 0) {
@@ -367,6 +368,7 @@ static void dec_flush(Ctx *c) {
         d->qhead = d->qn = 0;
         d->eos = 0;
         d->input_eos = 0;
+        d->flushed = 1;
         for (int i = 0; i < MAX_SLOTS; i++) d->slot_last[i] = 0;
         ReleaseSRWLockExclusive(&d->lock);
     }
@@ -386,13 +388,13 @@ static void dec_unregister(Ctx *c) {
 /* AcquireXDecoderOutputBuffer(u32* index, NativeSyncHandle*, decoder): the oldest picture into a free buffer */
 static void dec_acquire(Ctx *c) {
     Dec *d = (Dec *)host_of(ARG(2), DEC_MAGIC);
-    if (ARG(1)) G64(ARG(1)) = 0;
+    if (ARG(1)) { G64(ARG(1)) = 0; G64(ARG(1) + 8) = 0; }
     if (!d) { RET(RESULT_NO_OUTPUT); return; }
     /* (the library aborts on any failure here: the hardware call waits for a picture. Up to ~100 ms for one decoded
        by another thread's submission; then a free buffer as it was, so the caller is never refused) */
     AcquireSRWLockExclusive(&d->lock);
     decode_pending(d);
-    for (int tries = 0; (d->ctx || d->mf) && !d->qn && !d->eos && tries < 50; tries++) {
+    for (int tries = 0; (d->ctx || d->mf) && !d->qn && !d->eos && !d->flushed && tries < 50; tries++) {
         ReleaseSRWLockExclusive(&d->lock);
         hos_sleep_ns(2000000);
         AcquireSRWLockExclusive(&d->lock);
@@ -423,6 +425,9 @@ static void dec_acquire(Ctx *c) {
         if (d->eos) {
             d->slot_last[slot] = 1;
             if (d->last_pts > d->slot_pts[slot]) d->slot_pts[slot] = d->last_pts;
+        } else if (d->flushed && ARG(1)) {
+            G64(ARG(1)) = (uint64_t)(uintptr_t)&d->flushed;
+            G64(ARG(1) + 8) = 0xdeadbeefULL;
         }
         if (video_log()) hos_log("video: acquire %lld: nothing decoded%s, buffer %d again", (long long)d->acquires,
                                  d->eos ? " (the end)" : "", slot);

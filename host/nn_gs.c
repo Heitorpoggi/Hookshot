@@ -23,5 +23,11 @@ HLE(_ZN2nv21GetGraphicsMemoryInfoEPNS_10MemoryInfoE) { memset(GP(ARG(0)), 0, 0x4
    nn_video.c complete their work in order, so every one is reached. MKW's movie library asserts TryWaitNativeSync
    on each decoded frame before it takes it. */
 HLE(_ZN2nn2gs14WaitNativeSyncERKNS0_16NativeSyncHandleE) { RET(0); }
-HLE(_ZN2nn2gs17TryWaitNativeSyncERKNS0_16NativeSyncHandleE) { RET(1); }
+HLE(_ZN2nn2gs17TryWaitNativeSyncERKNS0_16NativeSyncHandleE) {
+    if (ARG(0) && G64(ARG(0) + 8) == 0xdeadbeefULL && G64(ARG(0)) && *(volatile int *)(uintptr_t)G64(ARG(0))) {
+        RET(0);
+        return;
+    }
+    RET(1);
+}
 HLE(_ZN2nn2gs19TimedWaitNativeSyncERKNS0_16NativeSyncHandleENS_8TimeSpanE) { RET(1); }
