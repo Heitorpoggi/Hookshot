@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <map>
 #include <array>
 #include <bit>
 #include <climits>
@@ -962,10 +963,46 @@ void EmitContext::DefineWriteStorageCasLoopFunction(const Info& info) {
     write_storage_cas_loop_func = func;
 }
 
+// (hookshot) The page table of guest memory for pointers no bound buffer holds: 4 KB pages from this base, a device address each
+constexpr unsigned long long kGuestPagesBase = 0x1000000000ull;
+constexpr unsigned long long kGuestPagesBytes = 8ull << 30;
+
 void EmitContext::DefineGlobalMemoryFunctions(const Info& info) {
     if (!info.uses_global_memory || !profile.support_int64) {
         return;
     }
+    // (hookshot) A pointer that is in no bound buffer. Eden gave such a load 0, and the game's foliage culling follows pointers read from its
+    // storage buffers to all of a forest's data: it read zeros, and left out every tree, fern and blade of grass. The console's GPU just reads
+    // memory: here a page table (vk_memory.cpp) takes the guest address to its pool's device address.
+    const char* const gp_test{getenv("RX_VK_GP_TEST")};   // (1: the addressing model alone, 2: and the table's load, 3 or unset: all of it)
+    const int gp_level{gp_test ? atoi(gp_test) : 3};
+    // (the culling; a graphics stage with it hung the renderer at a load. RX_VK_NO_FOLLOW: none of it, as before)
+    static const bool no_follow{getenv("RX_VK_NO_FOLLOW") != nullptr};
+    const bool follow_pointers{stage == Stage::Compute && !no_follow};
+    Id ptr_u64{};
+    if (follow_pointers) {
+        wants_guest_pages = true;
+        if (profile.unified_descriptor_binding) DefineRescalingInputPushConstant();   // (the table's address is in it)
+        AddCapability(spv::Capability::PhysicalStorageBufferAddresses);
+        AddExtension("SPV_KHR_physical_storage_buffer");
+        SetMemoryModel(spv::AddressingModel::PhysicalStorageBuffer64, spv::MemoryModel::GLSL450);
+        ptr_u64 = TypePointer(spv::StorageClass::PhysicalStorageBuffer, U64);
+    }
+    // (a load through an address as glslang makes one: a pointer to a laid-out block, its member read. A pointer to a bare scalar crashed
+    // NVIDIA's shader compiler)
+    std::map<u32, std::pair<Id, Id>> psb_types;   // (by the type's id)
+    const auto psb_load = [&](Id type, Id address, u32 align) {
+        auto it = psb_types.find(type.value);
+        if (it == psb_types.end()) {
+            const Id block{TypeStruct(type)};
+            Decorate(block, spv::Decoration::Block);
+            MemberDecorate(block, 0, spv::Decoration::Offset, 0U);
+            it = psb_types.emplace(type.value, std::make_pair(TypePointer(spv::StorageClass::PhysicalStorageBuffer, block),
+                                                        TypePointer(spv::StorageClass::PhysicalStorageBuffer, type))).first;
+        }
+        const Id member{OpAccessChain(it->second.second, OpConvertUToPtr(it->second.first, address), Const(0U))};
+        return OpLoad(type, member, spv::MemoryAccessMask::Aligned, align);
+    };
     using DefPtr = Id StorageDefinitions::*;
     const Id zero{u32_zero_value};
     const auto define_body{[&](DefPtr ssbo_member, Id addr, Id element_pointer, u32 shift,
@@ -1039,6 +1076,37 @@ void EmitContext::DefineGlobalMemoryFunctions(const Info& info) {
         const Id addr{OpFunctionParameter(U64)};
         define_body(ssbo_member, addr, element_pointer, shift,
                     [&](Id ssbo_pointer) { OpReturnValue(OpLoad(type, ssbo_pointer)); });
+        if (follow_pointers && gp_level >= 2) {
+            const Id table{wants_guest_pages && rescaling_push_constants.value != 0
+                               ? OpLoad(U64, OpAccessChain(TypePointer(spv::StorageClass::PushConstant, U64), rescaling_push_constants,
+                                                           Const(guest_pages_member_index)))
+                               : Constant(U64, u64{0})};   // (pushed: the table's device address, 0 for none)
+            const Id offset{OpISub(U64, addr, Constant(U64, u64{kGuestPagesBase}))};
+            const Id inside{OpLogicalAnd(U1, OpULessThan(U1, offset, Constant(U64, u64{kGuestPagesBytes})),
+                                         OpINotEqual(U1, table, Constant(U64, u64{0})))};
+            const Id then_label{OpLabel()};
+            const Id else_label{OpLabel()};
+            OpSelectionMerge(else_label, spv::SelectionControlMask::MaskNone);
+            OpBranchConditional(inside, then_label, else_label);
+            AddLabel(then_label);
+            const Id slot{OpIAdd(U64, table, OpShiftLeftLogical(U64, OpShiftRightLogical(U64, offset, Const(12U)), Const(3U)))};
+            const Id page{psb_load(U64, slot, 8U)};
+            const Id mapped{OpINotEqual(U1, page, Constant(U64, u64{0}))};   // (before the merge: it must stand right before its branch)
+            const Id hit_label{OpLabel()};
+            const Id miss_label{OpLabel()};
+            OpSelectionMerge(miss_label, spv::SelectionControlMask::MaskNone);
+            OpBranchConditional(mapped, hit_label, miss_label);
+            AddLabel(hit_label);
+            if (gp_level >= 3) {
+                const Id target{OpIAdd(U64, page, OpBitwiseAnd(U64, addr, Constant(U64, u64{0xfff})))};
+                OpReturnValue(psb_load(type, target, 4U));
+            } else {
+                OpReturnValue(ConstantNull(type));
+            }
+            AddLabel(miss_label);
+            OpBranch(else_label);
+            AddLabel(else_label);
+        }
         OpReturnValue(ConstantNull(type));
         OpFunctionEnd();
         return func_id;
@@ -1094,7 +1162,7 @@ void EmitContext::DefineGlobalMemoryFunctions(const Info& info) {
 }
 
 void EmitContext::DefineRescalingInput(const Info& info) {
-    if (!info.uses_rescaling_uniform) {
+    if (!info.uses_rescaling_uniform || rescaling_push_constants.value != 0) {   // (hookshot: or made already, for the page table)
         return;
     }
     if (profile.unified_descriptor_binding) {
@@ -1105,7 +1173,7 @@ void EmitContext::DefineRescalingInput(const Info& info) {
 }
 
 void EmitContext::DefineRescalingInputPushConstant() {
-    boost::container::static_vector<Id, 3> members{};
+    boost::container::static_vector<Id, 4> members{};
     u32 member_index{0};
 
     rescaling_textures_type = TypeArray(U32[1], Const(4u));
@@ -1121,6 +1189,10 @@ void EmitContext::DefineRescalingInputPushConstant() {
     if (stage != Stage::Compute) {
         members.push_back(F32[1]);
         rescaling_downfactor_member_index = member_index++;
+    }
+    if (wants_guest_pages) {
+        members.push_back(U64);
+        guest_pages_member_index = member_index++;
     }
     const Id push_constant_struct{TypeStruct(std::span(members.data(), members.size()))};
     Decorate(push_constant_struct, spv::Decoration::Block);
@@ -1139,6 +1211,10 @@ void EmitContext::DefineRescalingInputPushConstant() {
                        spv::Decoration::Offset,
                        static_cast<u32>(offsetof(RescalingLayout, down_factor)));
         MemberName(push_constant_struct, rescaling_downfactor_member_index, "down_factor");
+    }
+    if (wants_guest_pages) {
+        MemberDecorate(push_constant_struct, guest_pages_member_index, spv::Decoration::Offset, GUEST_PAGES_PUSH_OFFSET);
+        MemberName(push_constant_struct, guest_pages_member_index, "guest_pages");
     }
     const Id pointer_type{TypePointer(spv::StorageClass::PushConstant, push_constant_struct)};
     rescaling_push_constants = AddGlobalVariable(pointer_type, spv::StorageClass::PushConstant);

@@ -121,6 +121,7 @@ static void keys_update(void) {
 /* ---- the window ---- */
 static void *window;
 static volatile int renderer;   /* the renderer presents into the window */
+static HANDLE renderer_up;
 static int fullscreen;
 
 static int create_surface(void *w, void *instance, void *surface) { return sdl.Vulkan_CreateSurface(w, instance, surface); }
@@ -147,12 +148,17 @@ static DWORD WINAPI renderer_main(void *p) {
     const int ok = rx_start(&vk_window);
     if (!ok) hos_log("display: the renderer did not start: the window stays black");
     renderer = ok;
+    if (renderer_up) SetEvent(renderer_up);
     if (ok) {   /* (a size change while it started) */
         int w = 0, h = 0;
         sdl.Vulkan_GetDrawableSize(window, &w, &h);
         if (w > 0 && h > 0) rx_resize(w, h);
     }
     return 0;
+}
+
+void hos_renderer_wait(void) {
+    if (renderer_up) WaitForSingleObject(renderer_up, INFINITE);
 }
 
 static volatile int start_asked;
@@ -187,6 +193,7 @@ void hos_display_start(void) {
         rx_start(NULL);
         return;
     }
+    renderer_up = CreateEventA(NULL, TRUE, FALSE, NULL);
     __atomic_store_n(&start_asked, 1, __ATOMIC_RELEASE);
 }
 
@@ -208,6 +215,7 @@ void hos_display_loop(void) {
     if (!window) {
         hos_log("display: SDL_CreateWindow: %s: no window", sdl.GetError());
         rx_start(NULL);
+        if (renderer_up) SetEvent(renderer_up);
         for (;;) Sleep(1000);
     }
     vk_window.window = window;

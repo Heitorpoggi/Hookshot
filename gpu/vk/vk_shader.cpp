@@ -421,7 +421,9 @@ Shader::Profile make_profile() {
 Shader::HostTranslateInfo host_info() {
     Shader::HostTranslateInfo h{};
     h.support_float64 = true;
-    h.support_float16 = true;
+    // (RX_VK_NO_F16, a test: the game's f16 math lowered to f32, as a card without f16 shaders would need (GTX 10xx, issue 98). Eden's
+    // lowering made a picture of noise of Kokiri on an RTX card, so it is not used by itself)
+    h.support_float16 = !getenv("RX_VK_NO_F16");
     h.support_int64 = true;
     h.needs_demote_reorder = false;
     h.support_snorm_render_buffer = true;
@@ -716,8 +718,10 @@ void dump_ir(const Program& p, const char* stage, const Shader::IR::Program& pro
 void oot_visual(Shader::IR::Program& program, uint64_t key) {
     static const bool on = !getenv("RX_VK_OOT_VISUAL") || atoi(getenv("RX_VK_OOT_VISUAL")) != 0;
     if (!on) return;
-    static const float fog = getenv("RX_VK_OOT_FOG") ? (float)atof(getenv("RX_VK_OOT_FOG")) : 0.25f;
-    static const float exposure = getenv("RX_VK_OOT_EXPOSURE") ? (float)atof(getenv("RX_VK_OOT_EXPOSURE")) : 0.65f;
+    static const float fog = getenv("RX_VK_OOT_FOG") ? (float)atof(getenv("RX_VK_OOT_FOG")) : 0.08f;   // (0.25, Orchid's, left a white forest once the game no longer lost its start)
+    // (1: the game's own exposure. 0.65 was for the washed-out outdoors before shaders followed pointers; with the lighting right it
+    // made scenes too dark, issue 103)
+    static const float exposure = getenv("RX_VK_OOT_EXPOSURE") ? (float)atof(getenv("RX_VK_OOT_EXPOSURE")) : 1.0f;
     if (const size_t n = Shader::Optimization::ApplyOotVisualWorkaround(program, fog, exposure))
         logf("vk: OoT visual workaround: %s program %016llx, %zu edits", program.stage == Shader::Stage::Compute ? "fog" : "exposure",
              (unsigned long long)key, n);
@@ -749,7 +753,7 @@ uint64_t disk_stamp() {
     const uint64_t translator = HOOKSHOT_SHADER_STAMP;
     add(&translator, sizeof translator);
     for (char** e = _environ; e && *e; e++)
-        for (const char* pre : {"RX_VK_OOT", "RX_VK_MMA", "RX_VK_NATIVE", "RX_VK_NAN", "RX_VK_TASK_CAP", "RX_VK_NETWORK", "EDEN_"})
+        for (const char* pre : {"RX_VK_OOT", "RX_VK_MMA", "RX_VK_NATIVE", "RX_VK_NAN", "RX_VK_TASK_CAP", "RX_VK_NETWORK", "RX_VK_GP", "RX_VK_FOLLOW", "RX_VK_NO_FOLLOW", "RX_VK_NO_F16", "EDEN_"})
             if (!strncmp(*e, pre, strlen(pre))) add(*e, strlen(*e));
     return h;
 }
@@ -978,10 +982,17 @@ void translate_into(Program& p, const NvnState& s, const Code* vsc, const Code* 
                     kept_one = !k.empty() && !strncmp(hex, k.c_str(), k.size());
                     at = e == std::string::npos ? keep.size() : e + 1;
                 }
-                if (!kept_one && (Shader::Backend::SPIRV::mma_software || dev.props.vendorID != 0x10DE))
+                if ((!kept_one && (Shader::Backend::SPIRV::mma_software || dev.props.vendorID != 0x10DE)) || getenv("RX_VK_NO_F16"))
                     throw std::runtime_error("a network left out on this card");
             }
             const std::vector<uint32_t> spirv = Shader::Backend::SPIRV::EmitSPIRV(profile(), rt, t->program, bindings);
+            if (const char* d = getenv("RX_VK_IR")) {   // (the SPIR-V too, for spirv-val)
+                char name[64];
+                snprintf(name, sizeof name, "spv_%016llx.spv", (unsigned long long)p.key);
+                if (strstr(d, name + 4 > name ? name + 4 : name) || true)
+                    if (std::string(d).find(std::string(name + 4, 16)) != std::string::npos)
+                        if (FILE* f = fopen(name, "wb")) fwrite(spirv.data(), 4, spirv.size(), f), fclose(f);
+            }
             Stage st;
             st.nvn_stage = 5;
             st.info = t->program.info;

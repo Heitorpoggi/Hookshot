@@ -1835,8 +1835,44 @@ void log_slow_frame() {
 
 uint64_t made_ring[32];
 int64_t made_ring_present = 0;
+
+void log_perf_5s() {
+    static auto win_t0 = std::chrono::steady_clock::now();
+    static auto last_frame_t = win_t0;
+    static std::vector<double> ft_samples;
+    static bool first = true;
+    const auto now = std::chrono::steady_clock::now();
+    if (first) {
+        first = false;
+        win_t0 = last_frame_t = now;
+        ft_samples.reserve(1024);
+        return;
+    }
+    const double dt_ms = std::chrono::duration<double, std::milli>(now - last_frame_t).count();
+    last_frame_t = now;
+    if (dt_ms > 0.0 && dt_ms < 5000.0) ft_samples.push_back(dt_ms);
+    const double elapsed_s = std::chrono::duration<double>(now - win_t0).count();
+    if (elapsed_s >= 5.0 && !ft_samples.empty()) {
+        const double fps_avg = (double)ft_samples.size() / elapsed_s;
+        std::sort(ft_samples.begin(), ft_samples.end());
+        const size_t idx99 = std::min(ft_samples.size() - 1, (ft_samples.size() * 99) / 100);
+        const double p99_ms = ft_samples[idx99];
+        int64_t d = 0, sk = 0, di = 0, pl = 0, tr = 0, fl = 0;
+        draw_stats(&d, &sk, &di, &pl);
+        shader_stats(&tr, &fl);
+        printf("[PERF] FPS medio: %.1f | Frametime P99: %.2f ms | Pipelines compilados: %lld | Erros Vulkan: %lld\n",
+               fps_avg, p99_ms, (long long)pl, (long long)fl);
+        fflush(stdout);
+        logf("[PERF] FPS medio: %.1f | Frametime P99: %.2f ms | Pipelines compilados: %lld | Erros Vulkan: %lld",
+             fps_avg, p99_ms, (long long)pl, (long long)fl);
+        ft_samples.clear();
+        win_t0 = now;
+    }
+}
+
 void log_frame_stats() {
     log_slow_frame();
+    log_perf_5s();
     made_ring[presents % 32] = texture_made();
     made_ring_present = presents;
     if (++fps_n == 120) {
@@ -1923,7 +1959,12 @@ void do_present(const nvn_tex* t, const int crop[4]) {
         static const int64_t at = getenv("RX_VK_PASS_TRACE_AT") ? atoll(getenv("RX_VK_PASS_TRACE_AT")) : 0;
         if (at && ++seen % at == 0) pass_traces_log(texture_frame_no() - 1, texture_frame_no());
     }
-    static const char* shots = getenv("RX_VK_SHOTS");
+    static const char* shots = []() -> const char* {
+        const char* s = getenv("RX_VK_SHOTS");
+        if (!s && getenv("HOOKSHOT_AUTOTEST") && atoi(getenv("HOOKSHOT_AUTOTEST")) != 0) s = "/tmp/hookshot_frames";
+        if (s) CreateDirectoryA(s, nullptr);
+        return s;
+    }();
     static const int shot_every = getenv("RX_VK_SHOT_EVERY") ? std::max(1, atoi(getenv("RX_VK_SHOT_EVERY"))) : 300;
     VkImage src = VK_NULL_HANDLE;
     uint32_t sw = 0, sh = 0;
@@ -1972,7 +2013,12 @@ void do_present(const nvn_tex* t, const int crop[4]) {
             // (RX_VK_SHOT_FROM / _TO: every present in that range too)
             static const int64_t shot_from = getenv("RX_VK_SHOT_FROM") ? atoll(getenv("RX_VK_SHOT_FROM")) : -1;
             static const int64_t shot_to = getenv("RX_VK_SHOT_TO") ? atoll(getenv("RX_VK_SHOT_TO")) : -1;
-            shot = shots && (presents % shot_every == 0 || (presents >= shot_from && presents <= shot_to));
+            static auto last_shot_t = std::chrono::steady_clock::now();
+            const auto now_shot = std::chrono::steady_clock::now();
+            const double since_last_shot = std::chrono::duration<double>(now_shot - last_shot_t).count();
+            const bool timed_shot = shots && (presents == 30 || presents == 120 || since_last_shot >= 15.0);
+            if (timed_shot) last_shot_t = now_shot;
+            shot = shots && (timed_shot || presents % shot_every == 0 || (presents >= shot_from && presents <= shot_to));
             // (RX_VK_SHOT_MADE=1: the frame interpolation made before it too, written beside it as vk_N_made.png)
             static const bool shot_made = getenv("RX_VK_SHOT_MADE") != nullptr;
             uint32_t mw = 0, mh = 0;
@@ -2198,10 +2244,15 @@ void do_present(const nvn_tex* t, const int crop[4]) {
                 sa = sb, pa = pb, sb = small, pb = px, present_b = at_present;
                 if (at_present % 300) return;
             }
-            std::string path = std::string(shots) + "/vk_" + std::to_string(1000000 + at_present).substr(1) + ".png";
-            std::thread([px, path, at_present] {
+            std::string dir_str(shots);
+            std::string path = dir_str + "/vk_" + std::to_string(1000000 + at_present).substr(1) + ".png";
+            std::string latest_tmp = dir_str + "/.latest.tmp.png";
+            std::string latest_path = dir_str + "/latest.png";
+            std::thread([px, path, latest_tmp, latest_path, at_present] {
                 write_png(path.c_str(), px->data(), kShotW, kShotH);
-                logf("vk: present %lld written to %s", (long long)at_present, path.c_str());
+                write_png(latest_tmp.c_str(), px->data(), kShotW, kShotH);
+                std::rename(latest_tmp.c_str(), latest_path.c_str());
+                logf("vk: present %lld written to %s (and %s)", (long long)at_present, path.c_str(), latest_path.c_str());
             }).detach();
         };
         if (pending.on && (shot || completed() >= pending.value)) take(pending.value, pending.presents), pending.on = false;

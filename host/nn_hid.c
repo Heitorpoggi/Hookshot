@@ -198,6 +198,8 @@ static int64_t script_t0, script_end_ms;
 
 static int parse_presses(const char *s, int64_t base_ms, int live);
 
+extern volatile LONG64 hos_present_count;
+
 static void parse_script(void) {
     {   /* start SDL's controller thread now: pads are open by the time the game window comes to the front */
         int hos_sdl_pads(uint64_t *buttons, int32_t stick[4]);
@@ -207,7 +209,23 @@ static void parse_script(void) {
     }
     npresses = 0;
     script_t0 = hos_now_ns();
-    parse_presses(getenv("HOS_INPUT_SCRIPT"), 0, 0);
+    const char *script = getenv("HOS_INPUT_SCRIPT");
+    if (!script && getenv("HOOKSHOT_AUTOTEST") && atoi(getenv("HOOKSHOT_AUTOTEST")) != 0) {
+        /* Default autotest sequence (relative to first rendered frame):
+           - 2s..28s: PLUS and A pulses to pass title screen, select save slot 1, confirm name/new game, and advance intro dialogue
+           - 29s..180s: periodic A + PLUS pulses and 3D movement (LUP/LRIGHT/LDOWN + camera rotation) in Kokiri Forest / Link's House */
+        script =
+            "2.0:PLUS,3.5:A,5.0:PLUS,6.5:A,8.0:A,9.5:A,11.0:PLUS,12.5:A,14.0:A,15.5:A,17.0:PLUS,18.5:A,20.0:A,"
+            "21.5:A,23.0:PLUS,24.5:A,26.0:A,27.5:A,29.0:A,30.5:A,"
+            "32.0:LUP/3000,32.5:A,34.0:A,35.5:LRIGHT+RRIGHT/2500,36.0:A,37.5:A,"
+            "39.0:LUP/3000,39.5:A,41.0:A,42.5:LLEFT+RLEFT/2500,43.0:A,44.5:A,"
+            "46.0:LUP/4000,46.5:A,48.0:A,50.5:LDOWN+RRIGHT/2500,51.0:A,52.5:A,"
+            "54.0:LUP/4000,54.5:A,56.5:A,58.5:LRIGHT/3000,59.0:A,61.0:A,"
+            "62.5:LUP+RRIGHT/4000,63.0:A,65.0:A,67.0:LUP/4000,68.0:A,70.0:A,"
+            "72.0:LLEFT/3000,73.0:A,75.5:LUP/5000,76.0:A,78.0:A,81.0:LRIGHT+RRIGHT/4000,82.0:A,85.0:LUP/5000";
+        hos_log("hid: HOOKSHOT_AUTOTEST=1 active (starting input sequence after first presented frame)");
+    }
+    parse_presses(script, 0, 0);
     if (npresses)
         hos_log("hid: input script of %d presses (last at %.0f s; the player's devices count too)", npresses,
                 script_end_ms / 1000.0);
@@ -298,6 +316,10 @@ static int parse_presses(const char *s, int64_t base_ms, int live) {
 }
 
 static void scripted_input(uint64_t *buttons, int32_t stick[4]) {
+    static int wait_present = -1;
+    if (wait_present < 0)
+        wait_present = getenv("HOOKSHOT_AUTOTEST") && atoi(getenv("HOOKSHOT_AUTOTEST")) != 0;
+    if (wait_present && hos_present_count < 1) return;
     if (npresses < 0) parse_script();
     live_input();
     const int64_t ms = (hos_now_ns() - script_t0) / 1000000;
