@@ -52,11 +52,15 @@ VmaPool images_pool() {
     ai.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     uint32_t type = 0;
     if (vmaFindMemoryTypeIndexForImageInfo(vma, &rep, &ai, &type) != VK_SUCCESS) return VK_NULL_HANDLE;
+    uint64_t vram = 0;
+    for (uint32_t h = 0; h < dev.memory.memoryHeapCount; h++)
+        if (dev.memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) vram = std::max(vram, (uint64_t)dev.memory.memoryHeaps[h].size);
+    const uint64_t block_size = (vram && vram <= (4600ull << 20)) ? (32ull << 20) : kImageBlock;
     VmaPoolCreateInfo pi{};
     pi.memoryTypeIndex = type;
-    pi.blockSize = kImageBlock;
+    pi.blockSize = block_size;
     if (vmaCreatePool(vma, &pi, &image_pool) != VK_SUCCESS) image_pool = VK_NULL_HANDLE;
-    logf("vk: images from a pool of %llu MB blocks (memory type %u)%s", (unsigned long long)(kImageBlock >> 20), type,
+    logf("vk: images from a pool of %llu MB blocks (memory type %u)%s", (unsigned long long)(block_size >> 20), type,
          image_pool ? "" : ": not made");
     return image_pool;
 }

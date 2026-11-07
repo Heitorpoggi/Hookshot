@@ -1185,9 +1185,12 @@ Pool* pool_lookup(uint64_t guest, uint64_t size) {
 bool mirror_on() {
     static const int on = [] {
         const char* e = getenv("RX_VK_MIRROR");
-        const bool discrete = dev.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+        uint64_t vram = 0;
+        for (uint32_t h = 0; h < dev.memory.memoryHeapCount; h++)
+            if (dev.memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) vram = std::max(vram, (uint64_t)dev.memory.memoryHeaps[h].size);
+        const bool discrete = dev.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && (!vram || vram > (4600ull << 20));
         const int v = e ? atoi(e) != 0 : discrete;
-        logf("vk: VRAM mirror of buffer pools %s", v ? "on" : "off");
+        logf("vk: VRAM mirror of buffer pools %s (VRAM %llu MB)", v ? "on" : "off", (unsigned long long)(vram >> 20));
         return v;
     }();
     return on != 0;

@@ -3300,7 +3300,7 @@ bool upscale_stub(VkCommandBuffer cmd, const NvnState& s, uint64_t key) {
 bool taau_key(uint64_t key) {
     // (the real network where the card runs it as the console does; on the software multiplies it cost most of a frame on AMD's cards, and a
     // locked 60 with this in its place: Hookshot issue 52)
-    static const char* keys = getenv("RX_VK_TAAU_KEYS") ? getenv("RX_VK_TAAU_KEYS") : "fd029a317a9a4b94,0775215f8da720e6";
+    static const char* keys = getenv("RX_VK_TAAU_KEYS") ? getenv("RX_VK_TAAU_KEYS") : "fd029a317a9a4b94,0775215f8da720e6,72ba090c70fe2614";
     char hex[24];
     snprintf(hex, sizeof hex, "%016llx", (unsigned long long)key);
     bool match = false;
@@ -3312,9 +3312,16 @@ bool taau_key(uint64_t key) {
     }
     return match;
 }
+bool is_taau_prog(const Program& p) {
+    static const char* keys = getenv("RX_VK_TAAU_KEYS");
+    if (keys && !strcmp(keys, "-")) return false;
+    if (taau_key(p.key)) return true;
+    return !p.stages.empty() && p.stages[0].info.uses_cooperative_matrix &&
+           p.stages[0].info.texture_descriptors.size() == 1 && p.stages[0].info.image_descriptors.size() == 1;
+}
 bool taau_stand_in(VkCommandBuffer cmd, const NvnState& s, const Program& p) {
-    const char* keys = getenv("RX_VK_TAAU_KEYS") ? getenv("RX_VK_TAAU_KEYS") : "fd029a317a9a4b94,0775215f8da720e6";
-    if (!taau_key(p.key) || !dev.push_descriptor || !vkCmdPushDescriptorSetKHR || p.stages.empty()) return false;
+    const char* keys = getenv("RX_VK_TAAU_KEYS") ? getenv("RX_VK_TAAU_KEYS") : "fd029a317a9a4b94,0775215f8da720e6,72ba090c70fe2614";
+    if (!is_taau_prog(p) || !dev.push_descriptor || !vkCmdPushDescriptorSetKHR || p.stages.empty()) return false;
     const Stage& st = p.stages[0];
     if (st.info.texture_descriptors.empty() || st.info.image_descriptors.empty()) return false;
     size_t ntex = 0;   // (build_descriptors' image infos: the textures', then the images')
@@ -3691,7 +3698,7 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
     Program& p = const_cast<Program&>(*cp);
     ParLock plk(!p.layout || !p.compute_pipeline);
     ensure_layout(p);
-    if (!p.compute_pipeline && !taau_key(p.key)) {   // (a stood-in network is never compiled)
+    if (!p.compute_pipeline && !is_taau_prog(p)) {   // (a stood-in network is never compiled)
         pcache_init();
         VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;

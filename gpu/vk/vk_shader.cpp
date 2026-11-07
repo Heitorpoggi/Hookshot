@@ -973,9 +973,11 @@ void translate_into(Program& p, const NvnState& s, const Code* vsc, const Code* 
             // fps, a little softer. The gameplay TAAU network stays. RX_VK_NETWORK_KEEP=<key prefixes>, "all": every one runs
             if (t->program.info.uses_cooperative_matrix) {
                 static const std::string keep = getenv("RX_VK_NETWORK_KEEP") ? getenv("RX_VK_NETWORK_KEEP") : "fd029a317a9a4b94";
+                const bool is_taau_3d =
+                    t->program.info.texture_descriptors.size() == 1 && t->program.info.image_descriptors.size() == 1;
                 char hex[24];
                 snprintf(hex, sizeof hex, "%016llx", (unsigned long long)p.key);
-                bool kept_one = keep == "all";
+                bool kept_one = keep == "all" || is_taau_3d;
                 for (size_t at = 0; !kept_one && at < keep.size();) {
                     const size_t e = keep.find(',', at);
                     const std::string k = keep.substr(at, e == std::string::npos ? std::string::npos : e - at);

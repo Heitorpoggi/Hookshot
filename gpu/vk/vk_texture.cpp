@@ -1580,7 +1580,7 @@ Texture* texture_touch(Texture* tex, bool for_sampling) {
     // GPU's contents, and MKW's font cache is cleared on the GPU with its glyphs written by the CPU as text appears
     // (the menus were missing every letter added later). Only whole pages of its storage: a write to another variable
     // sharing an edge page once re-uploaded garbage over a drawn LUT (the rainbow sky). Opt-in (RX_VK_CPU_OVER_GPU=1): transient render targets share memory the CPU writes for other things, and took that over their texels, and the menus' letters stayed missing with it.
-    if (tex->gpu_written) {
+    if (tex->gpu_written && !tex->released) {
         // (hookshot) and a texture the GPU only cleared: the game's font cache, whose letters the CPU writes as text appears. Its menu text
         // went missing at random (Hookshot issues 40 and 44), whenever the clear reached the image first
         static const bool take = getenv("RX_VK_CPU_OVER_GPU") != nullptr;
@@ -1637,7 +1637,7 @@ Texture* texture_touch(Texture* tex, bool for_sampling) {
     static const bool no_partial = getenv("RX_VK_NO_PARTIAL") != nullptr;   // (A/B: whole re-uploads)
     // (a buffer the GPU wrote over its storage, done since: all of it again; the tiles of MKW's terrain are filled so
     // and stayed the flat placeholder they were made with)
-    const bool gpu_dirty = tex->uploaded && !tex->gpu_written && gpu_wrote_into(*tex);
+    const bool gpu_dirty = tex->uploaded && !(tex->gpu_written && tex->gpu >= (1ull << 40)) && gpu_wrote_into(*tex);
     const bool partial = !no_partial && !gpu_dirty && tex->uploaded && !tex->gpu_written && !tex->released;
     // (a texture the GPU drew and the game finalized: only what the CPU wrote since then. Its memory never got the
     // GPU's texels, and a write before (another variable in the same page) re-uploaded garbage over a drawn LUT:
@@ -2196,7 +2196,7 @@ bool texture_touch_quick(Texture* tex, bool for_sampling) {
     tex->last_value = rec_value;
     if (!for_sampling) return true;
     if (is_depth_format(tex->format)) return true;
-    if (tex->gpu_written && !tex->only_cleared) return true;
+    if (tex->gpu_written && !tex->released && !tex->only_cleared) return true;
     if (tex->upload_value == rec_value && tex->upload_seg > tl_seg) return false;
     return tex->uploaded && tex->checked_epoch == epoch;
 }
@@ -2522,13 +2522,15 @@ void texture_frame(uint64_t completed) {
     // may have (other programs use the GPU too). The least recently used go first, down to 7/8 of it; nothing the
     // last 8 presents used, nothing recorded work may still read.
     static uint64_t own = 0;
-    if (frame_no % 10) return;
+    if ((frame_no % 10) && (!own || total_bytes <= own)) return;
     uint64_t used = 0, allowed = 0, block_free = 0;
     const bool known = vram_usage(&used, &allowed, &block_free);
-    if (!own)   // (RX_VK_VRAM_MB, else 70% of what the driver allows the process at the first look)
+    if (!own)   // (RX_VK_VRAM_MB, else 70% of what the driver allows the process at the first look; capped at 1800 MB on <= 4.6 GB cards)
         own = getenv("RX_VK_VRAM_MB") ? (uint64_t)atoi(getenv("RX_VK_VRAM_MB")) << 20
-              : known                ? std::min<uint64_t>(allowed / 10 * 7, 6144ull << 20)   // (hookshot: at most 6 GB. A 16 GB
-                                                                                             // card's 10.8 GB filled up, read as a leak: 105, 106)
+              : known                ? (allowed <= (4600ull << 20)
+                                            ? std::min<uint64_t>(allowed * 48 / 100, 1800ull << 20)
+                                            : std::min<uint64_t>(allowed / 10 * 7, 6144ull << 20))   // (hookshot: at most 6 GB. A 16 GB
+                                                                                                     // card's 10.8 GB filled up, read as a leak: 105, 106)
                                      : 4096ull << 20;
     uint64_t budget = own;
     // (near what the driver allows, the budget shrinks by the excess. The excess of what the process holds less the
@@ -2540,12 +2542,14 @@ void texture_frame(uint64_t completed) {
     // out. RX_VK_BUDGET_BY_BLOCKS=1: as before)
     static const bool by_blocks = getenv("RX_VK_BUDGET_BY_BLOCKS") != nullptr;
     const uint64_t pressure = by_blocks ? used : used - std::min(used, block_free);
-    if (known && pressure > allowed / 10 * 9) {
-        const uint64_t over = pressure - allowed / 10 * 9;
+    const uint64_t press_limit = (known && allowed <= (4600ull << 20)) ? (allowed * 78 / 100) : (allowed / 10 * 9);
+    const uint64_t used_limit = (known && allowed <= (4600ull << 20)) ? (allowed * 86 / 100) : (allowed / 100 * 97);
+    if (known && pressure > press_limit) {
+        const uint64_t over = pressure - press_limit;
         budget = std::min(budget, total_bytes > over ? total_bytes - over : 0);
     }
-    if (known && !by_blocks && used > allowed / 100 * 97) {
-        const uint64_t over = used - allowed / 100 * 97;
+    if (known && !by_blocks && used > used_limit) {
+        const uint64_t over = used - used_limit;
         budget = std::min(budget, total_bytes > over ? total_bytes - over : 0);
     }
     if (frame_no % 600 == 0) {
