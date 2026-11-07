@@ -1291,7 +1291,7 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
         static const uint64_t max_bytes = [] {
             if (const char* e = getenv("RX_VK_TEX_MAX_MB")) return (uint64_t)atoi(e) << 20;
             uint64_t u = 0, a = 0;
-            if (vram_usage(&u, &a) && a && a <= (4600ull << 20)) return (uint64_t)(384ull << 20);
+            if (vram_usage(&u, &a) && a && a <= (4600ull << 20)) return (uint64_t)(192ull << 20);
             return (uint64_t)(1536ull << 20);
         }();
         const uint32_t texel = astc ? 4 : std::max(1, bpb / std::max(1, bw * bh));
@@ -2532,7 +2532,7 @@ void texture_frame(uint64_t completed) {
     if (!own)   // (RX_VK_VRAM_MB, else 70% of what the driver allows the process at the first look; 1900 MB on <= 4.6 GB cards)
         own = getenv("RX_VK_VRAM_MB") ? (uint64_t)atoi(getenv("RX_VK_VRAM_MB")) << 20
               : known                ? (allowed <= (4600ull << 20)
-                                            ? std::min<uint64_t>(allowed * 54 / 100, 2048ull << 20)
+                                            ? std::min<uint64_t>(allowed * 62 / 100, 2300ull << 20)
                                             : std::min<uint64_t>(allowed / 10 * 7, 6144ull << 20))   // (hookshot: at most 6 GB. A 16 GB
                                                                                                      // card's 10.8 GB filled up, read as a leak: 105, 106)
                                      : 4096ull << 20;
