@@ -99,7 +99,7 @@ bool create_buffer(uint64_t size, VkBufferUsageFlags usage, bool host_visible, V
     bi.size = size;
     bi.usage = usage;
     VmaAllocationCreateInfo ai{};
-    ai.usage = VMA_MEMORY_USAGE_AUTO;
+    ai.usage = host_visible ? VMA_MEMORY_USAGE_AUTO_PREFER_HOST : VMA_MEMORY_USAGE_AUTO;
     if (host_visible) ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
     VmaAllocationInfo info{};
     if (vmaCreateBuffer(vma, &bi, &ai, &buffer, &allocation, &info) != VK_SUCCESS) return false;

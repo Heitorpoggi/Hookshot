@@ -1580,7 +1580,7 @@ Texture* texture_touch(Texture* tex, bool for_sampling) {
     // GPU's contents, and MKW's font cache is cleared on the GPU with its glyphs written by the CPU as text appears
     // (the menus were missing every letter added later). Only whole pages of its storage: a write to another variable
     // sharing an edge page once re-uploaded garbage over a drawn LUT (the rainbow sky). Opt-in (RX_VK_CPU_OVER_GPU=1): transient render targets share memory the CPU writes for other things, and took that over their texels, and the menus' letters stayed missing with it.
-    if (tex->gpu_written && !tex->released) {
+    if (tex->gpu_written && (!tex->released || tex->gpu >= (1ull << 40))) {
         // (hookshot) and a texture the GPU only cleared: the game's font cache, whose letters the CPU writes as text appears. Its menu text
         // went missing at random (Hookshot issues 40 and 44), whenever the clear reached the image first
         static const bool take = getenv("RX_VK_CPU_OVER_GPU") != nullptr;
@@ -2196,7 +2196,7 @@ bool texture_touch_quick(Texture* tex, bool for_sampling) {
     tex->last_value = rec_value;
     if (!for_sampling) return true;
     if (is_depth_format(tex->format)) return true;
-    if (tex->gpu_written && !tex->released && !tex->only_cleared) return true;
+    if (tex->gpu_written && (!tex->released || tex->gpu >= (1ull << 40)) && !tex->only_cleared) return true;
     if (tex->upload_value == rec_value && tex->upload_seg > tl_seg) return false;
     return tex->uploaded && tex->checked_epoch == epoch;
 }
@@ -2525,10 +2525,10 @@ void texture_frame(uint64_t completed) {
     if ((frame_no % 10) && (!own || total_bytes <= own)) return;
     uint64_t used = 0, allowed = 0, block_free = 0;
     const bool known = vram_usage(&used, &allowed, &block_free);
-    if (!own)   // (RX_VK_VRAM_MB, else 70% of what the driver allows the process at the first look; capped at 1800 MB on <= 4.6 GB cards)
+    if (!own)   // (RX_VK_VRAM_MB, else 70% of what the driver allows the process at the first look; 2350 MB on <= 4.6 GB cards)
         own = getenv("RX_VK_VRAM_MB") ? (uint64_t)atoi(getenv("RX_VK_VRAM_MB")) << 20
               : known                ? (allowed <= (4600ull << 20)
-                                            ? std::min<uint64_t>(allowed * 48 / 100, 1800ull << 20)
+                                            ? std::min<uint64_t>(allowed * 64 / 100, 2350ull << 20)
                                             : std::min<uint64_t>(allowed / 10 * 7, 6144ull << 20))   // (hookshot: at most 6 GB. A 16 GB
                                                                                                      // card's 10.8 GB filled up, read as a leak: 105, 106)
                                      : 4096ull << 20;
@@ -2542,8 +2542,8 @@ void texture_frame(uint64_t completed) {
     // out. RX_VK_BUDGET_BY_BLOCKS=1: as before)
     static const bool by_blocks = getenv("RX_VK_BUDGET_BY_BLOCKS") != nullptr;
     const uint64_t pressure = by_blocks ? used : used - std::min(used, block_free);
-    const uint64_t press_limit = (known && allowed <= (4600ull << 20)) ? (allowed * 78 / 100) : (allowed / 10 * 9);
-    const uint64_t used_limit = (known && allowed <= (4600ull << 20)) ? (allowed * 86 / 100) : (allowed / 100 * 97);
+    const uint64_t press_limit = (known && allowed <= (4600ull << 20)) ? (allowed * 86 / 100) : (allowed / 10 * 9);
+    const uint64_t used_limit = (known && allowed <= (4600ull << 20)) ? (allowed * 93 / 100) : (allowed / 100 * 97);
     if (known && pressure > press_limit) {
         const uint64_t over = pressure - press_limit;
         budget = std::min(budget, total_bytes > over ? total_bytes - over : 0);
