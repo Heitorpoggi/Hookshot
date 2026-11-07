@@ -41,6 +41,7 @@ struct Pool {
     VmaAllocation mirror_alloc = nullptr;
     uint32_t synced_gen = 0;     // every page stamped up to this generation is in the mirror
     uint64_t synced_epoch = 0;   // the submission that last brought it up to date
+    uint64_t bound_epoch = 0;    // the submission that last actually bound this pool
     uint64_t sync_seg = 0;       // (and the parallel replay's segment whose uploads did)
     uint64_t last_value = 0;     // (the newest submission that bound it: its mirror is in use until that one is done)
     uint64_t direct_write_epoch = 0;   // (the part that last wrote it in guest memory, before it had a mirror)
@@ -1073,9 +1074,9 @@ Pool* pool_lookup(uint64_t guest, uint64_t size) {
     --it;
     if (guest < it->lo || guest + size > it->hi) return nullptr;
     const GuestPool range = *it;
-    // (imports by 16 MB chunk (RX_VK_IMPORT_CHUNK_MB), not by pool: each import cost 5-45 ms in the driver, more as
-    // their number grew, and the game makes ~13 pools a second; a chunk covers the pools after it at no cost)
-    static const uint64_t chunk = (uint64_t)(getenv("RX_VK_IMPORT_CHUNK_MB") ? std::max(0, atoi(getenv("RX_VK_IMPORT_CHUNK_MB"))) : 16) << 20;
+    // (imports by 8 MB chunk (RX_VK_IMPORT_CHUNK_MB) for pools < 64 MB, not 16 MB: avoids merging small hot constant pools
+    // into adjacent 305 MB asset pools while keeping the mirror allocation count low)
+    static const uint64_t chunk = (uint64_t)(getenv("RX_VK_IMPORT_CHUNK_MB") ? std::max(0, atoi(getenv("RX_VK_IMPORT_CHUNK_MB"))) : 8) << 20;
     auto covering = [&]() {
         auto c = imported.upper_bound(range.lo);
         if (c == imported.begin()) return imported.end();
@@ -1083,8 +1084,9 @@ Pool* pool_lookup(uint64_t guest, uint64_t size) {
         return c->second.lo <= range.lo && c->second.hi >= range.hi ? c : imported.end();
     };
     auto imp = chunk ? covering() : imported.find(range.lo);
-    const uint64_t want_lo = chunk ? range.lo & ~(chunk - 1) : range.lo;
-    const uint64_t want_hi = chunk ? (range.hi + chunk - 1) & ~(chunk - 1) : range.hi;
+    const uint64_t c_align = (chunk && (range.hi - range.lo) < (64ull << 20)) ? chunk : align;
+    const uint64_t want_lo = range.lo & ~(c_align - 1);
+    const uint64_t want_hi = (range.hi + c_align - 1) & ~(c_align - 1);
     if (chunk && imp == imported.end()) imp = imported.find(want_lo);   // (a smaller one there: made again, larger)
     if (imp == imported.end() || imp->second.hi < range.hi) {   // (under way in the background: waited for)
         bool waited = false;
@@ -1188,7 +1190,7 @@ bool mirror_on() {
         uint64_t vram = 0;
         for (uint32_t h = 0; h < dev.memory.memoryHeapCount; h++)
             if (dev.memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) vram = std::max(vram, (uint64_t)dev.memory.memoryHeaps[h].size);
-        const bool discrete = dev.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && (!vram || vram > (4600ull << 20));
+        const bool discrete = dev.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
         const int v = e ? atoi(e) != 0 : discrete;
         logf("vk: VRAM mirror of buffer pools %s (VRAM %llu MB)", v ? "on" : "off", (unsigned long long)(vram >> 20));
         return v;
@@ -1196,12 +1198,13 @@ bool mirror_on() {
     return on != 0;
 }
 uint64_t mirror_budget() {
-    // (a quarter of the card, at most the 3 GB it was for all: on a 6 GB laptop those and the textures were past what the card has)
+    // (a quarter of the card, at most the 3 GB it was for all; 640 MB on <= 4.6 GB cards now that host_visible buffers are in host RAM)
     static const uint64_t b = [] {
         if (const char* e = getenv("RX_VK_MIRROR_MB")) return (uint64_t)atoi(e) << 20;
         uint64_t vram = 0;
         for (uint32_t h = 0; h < dev.memory.memoryHeapCount; h++)
             if (dev.memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) vram = std::max(vram, (uint64_t)dev.memory.memoryHeaps[h].size);
+        if (vram && vram <= (4600ull << 20)) return (uint64_t)(640ull << 20);
         return vram ? std::min<uint64_t>(vram / 4, 3072ull << 20) : (uint64_t)(3072ull << 20);
     }();
     return b;
@@ -1411,6 +1414,7 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
         Pool* p = tl.p;
         const uint64_t off = guest - p->lo;
         if (p->last_value < mem_rec_value) p->last_value = mem_rec_value;
+        p->bound_epoch = mirror_epoch;
         if (!mirror_on() || !mirror_upload || p->mstate == Pool::MIRROR_REFUSED || p->mstate == Pool::MIRROR_WANTED)
             return {p->buffer, off, size, 0};
         if (p->mstate == Pool::MIRROR_ON && p->synced_epoch == mirror_epoch && p->sync_seg <= texture_segment())
@@ -1423,6 +1427,7 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
     tl = {p, pools_gen.load(std::memory_order_relaxed)};
     (void)par;
     if (p->last_value < mem_rec_value) p->last_value = mem_rec_value;
+    p->bound_epoch = mirror_epoch;
     const uint64_t off = guest - p->lo;
     if (!mirror_on() || !mirror_upload || p->mstate == Pool::MIRROR_REFUSED) {
         if (mirror_on()) { auto& e = direct_by_pool[p->lo]; e.first++, e.second = mirror_upload ? (int)p->mstate : 9; }
@@ -1452,7 +1457,8 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
         return {p->buffer, off, size, 0};
     }
     if (p->synced_epoch != mirror_epoch || p->sync_seg > texture_segment()) mirror_sync(*p);
-    if (written) writebacks.push_back({p, off, std::min(off + size, p->hi - p->lo)});
+    static const bool full_wb = getenv("RX_VK_WRITEBACK") != nullptr;
+    if (written && (full_wb || size <= 65536)) writebacks.push_back({p, off, std::min(off + size, p->hi - p->lo)});
     return {p->mirror, off, size, 0};
 }
 
@@ -1462,7 +1468,7 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
 // stayed in system memory for good (the GPU read them over PCIe). Now a retired pool's mirror goes once the GPU is done
 // with the submissions that bound it; a mirror not bound for kIdleEpochs submissions goes when a wanted one does not
 // fit, or after kLongIdle; and a pool refused for the budget is tried again when it is next bound.
-constexpr uint64_t kIdleEpochs = 600, kLongIdle = 6000;
+constexpr uint64_t kIdleEpochs = 60, kLongIdle = 240;
 int64_t st_mirrors_freed = 0;
 uint64_t st_mirror_bytes_freed = 0;
 void mirror_free(Pool& p) {
@@ -1489,11 +1495,11 @@ void mirrors_give_back(uint64_t want_bytes) {   // (pools_mu held)
     }
     std::vector<Pool*> idle;
     for (auto& [lo, p] : imported)
-        if (p.mstate == Pool::MIRROR_ON && mirror_epoch - p.synced_epoch > kIdleEpochs && p.last_value <= mem_completed)
+        if (p.mstate == Pool::MIRROR_ON && mirror_epoch - p.bound_epoch > kIdleEpochs && p.last_value <= mem_completed)
             idle.push_back(&p);
-    std::sort(idle.begin(), idle.end(), [](const Pool* a, const Pool* b) { return a->synced_epoch < b->synced_epoch; });
+    std::sort(idle.begin(), idle.end(), [](const Pool* a, const Pool* b) { return a->bound_epoch < b->bound_epoch; });
     for (Pool* p : idle)
-        if (mirror_epoch - p->synced_epoch > kLongIdle || mirror_bytes + want_bytes > mirror_budget()) mirror_free(*p);
+        if (mirror_epoch - p->bound_epoch > kLongIdle || mirror_bytes + want_bytes > mirror_budget()) mirror_free(*p);
     static int64_t logged_at;
     if (st_mirrors_freed / 16 != logged_at) {
         logged_at = st_mirrors_freed / 16;
@@ -1513,7 +1519,7 @@ void memory_begin_submission() {
     {
         uint64_t want = 0;
         for (Pool* p : mirror_wanted) want += p->hi - p->lo;
-        if (mirror_epoch % 64 == 0 || mirror_bytes + want > mirror_budget()) mirrors_give_back(want);
+        if (mirror_epoch % 32 == 0 || mirror_bytes + want > mirror_budget()) mirrors_give_back(want);
     }
     if (mirror_wanted.empty()) return;
     for (Pool* p : mirror_wanted) mirror_make(*p);
@@ -1537,7 +1543,7 @@ void memory_sync_mirrors_before_segments() {
     std::lock_guard lk(pools_mu);
     for (auto& kv : imported) {
         Pool& p = kv.second;
-        if (p.mstate != Pool::MIRROR_ON || p.synced_epoch == mirror_epoch) continue;
+        if (p.mstate != Pool::MIRROR_ON || p.synced_epoch == mirror_epoch || mirror_epoch - p.bound_epoch > 30) continue;
         mirror_sync(p);
         p.sync_seg = 0;
     }
@@ -1545,13 +1551,15 @@ void memory_sync_mirrors_before_segments() {
 
 /// A pool's mirror made, filled in the recording's upload command buffer: all of it, then the pages a capture holds
 /// as they were at their submit (pools_mu held). False over the budget (tried again when next bound, as mirrors are
-/// given back) or over 1 GB (never)
+/// given back) or over max_pool (never)
 bool mirror_make(Pool& pool) {
     Pool* p = &pool;
     {
         const uint64_t n = p->hi - p->lo;
-        if (mirror_bytes + n > mirror_budget() || n > (1ull << 30)) {
-            p->mstate = n > (1ull << 30) ? Pool::MIRROR_REFUSED : Pool::MIRROR_NONE;
+        const uint64_t max_pool = mirror_budget() <= (640ull << 20) ? (192ull << 20) : (1ull << 30);
+        if (mirror_bytes + n > mirror_budget() && n <= max_pool) mirrors_give_back(n);
+        if (mirror_bytes + n > mirror_budget() || n > max_pool) {
+            p->mstate = n > max_pool ? Pool::MIRROR_REFUSED : Pool::MIRROR_NONE;
             static int logged;
             if (logged++ < 8)
                 logf("vk: pool %#llx (%llu MB) stays in system memory: the mirrors have %llu MB of %llu", (unsigned long long)p->lo,
@@ -1597,6 +1605,7 @@ bool mirror_make(Pool& pool) {
         p->mstate = Pool::MIRROR_ON;
         p->synced_gen = gen_now;
         p->synced_epoch = mirror_epoch;
+        p->bound_epoch = mirror_epoch;
         p->sync_seg = texture_segment();
         mirror_synced.push_back(p);
         mirror_bytes += n;

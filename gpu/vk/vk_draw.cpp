@@ -86,7 +86,7 @@ struct RecordingRes {
     uint64_t used = 0;
     std::unordered_map<const void*, uint64_t> c1_at;   // (c1 of a stage: uploaded once a recording)
 };
-constexpr uint64_t kStream = 24u << 20;   // (a recording's: 24 of them, vk_replay.cpp kRecordings)
+constexpr uint64_t kStream = 4u << 20;   // (a recording's: 24 of them, vk_replay.cpp kRecordings)
 std::deque<RecordingRes> res;   // (a deque: a recording thread keeps its own in place while another is added)
 thread_local RecordingRes* cur = nullptr;
 
