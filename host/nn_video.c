@@ -323,7 +323,11 @@ static volatile LONG64 submissions;
 static void dec_submit(Ctx *c) {
     Dec *d = (Dec *)host_of(ARG(1), DEC_MAGIC);
     if (ARG(0)) G64(ARG(0)) = (uint64_t)InterlockedIncrement64(&submissions);
-    if (!d || (!d->ctx && !d->mf)) { RET(0); return; }
+    if (!d || (!d->ctx && !d->mf)) {
+        if (d && (ARG(5) & 1)) d->eos = 1;
+        RET(0);
+        return;
+    }
     AcquireSRWLockExclusive(&d->lock);
     if (ARG(2) && ARG(3)) {
         AVPacket *pkt = av_packet_alloc();
@@ -378,7 +382,7 @@ static void dec_acquire(Ctx *c) {
        by another thread's submission; then a free buffer as it was, so the caller is never refused) */
     AcquireSRWLockExclusive(&d->lock);
     decode_pending(d);
-    for (int tries = 0; !d->qn && !d->eos && tries < 50; tries++) {
+    for (int tries = 0; (d->ctx || d->mf) && !d->qn && !d->eos && tries < 50; tries++) {
         ReleaseSRWLockExclusive(&d->lock);
         hos_sleep_ns(2000000);
         AcquireSRWLockExclusive(&d->lock);

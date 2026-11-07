@@ -106,6 +106,7 @@ static DWORD WINAPI pad_main(void *arg) {
     hos_host_thread_register_self("gamepads (SDL)");
     /* poll in the background, whatever window is in front (nn_hid.c decides when input counts) */
     sdl.SetHint("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
+    sdl.SetHint("SDL_JOYSTICK_HIDAPI", "0");
     sdl.SetHint("SDL_JOYSTICK_HIDAPI_PS5_RUMBLE", "1");
     sdl.SetHint("SDL_JOYSTICK_HIDAPI_PS4_RUMBLE", "1");
     /* (the map below is by position; SDL2 reports Nintendo pads by their labels unless told not to, which put a Switch Pro
@@ -184,7 +185,7 @@ static DWORD WINAPI pad_main(void *arg) {
 int hos_sdl_pads(uint64_t *buttons, int32_t stick[4]) {
     static volatile LONG started;
     if (!started && !InterlockedExchange(&started, 1)) {
-        if (getenv("HOS_NO_SDL")) return 0;
+        if (getenv("HOS_NO_SDL") || getenv("HOOKSHOT_AUTOTEST")) return 0;
         if (!load()) {
             hos_log("hid: SDL2.dll not found next to the exe: only XInput controllers (Xbox pads) work");
             return 0;
