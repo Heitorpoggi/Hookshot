@@ -69,9 +69,11 @@ typedef struct {
     int qhead, qn;
     int eos;                         /* the last submission is in and decoded: an empty queue is the end */
     Pending *phead, *ptail;          /* submissions not decoded yet, oldest first */
-    int64_t submits, acquires;
+    int64_t submits, acquires, last_pts;
     SRWLOCK lock;
 } Dec;
+
+static volatile LONG nv12_reads;
 
 static void *host_of(uint64_t obj, uint32_t magic) {
     if (!obj || G32(obj + 8) != magic) return NULL;
@@ -153,6 +155,7 @@ HLE(_ZN2nn5codec26ReadDecoderOutputImageNv12EPKNS0_25VideoDecoderImagePoolTypeEj
     const uint32_t i = (uint32_t)ARG(1), x = (uint16_t)ARG(2), y = (uint16_t)ARG(3), w = (uint16_t)ARG(4), h = (uint16_t)ARG(5);
     const uint64_t ydst = ARG(6), ystride = ARG(7) ? ARG(7) : w;
     const uint64_t uvdst = G64(c->x[31] + 8), uvstride = G64(c->x[31] + 16) ? G64(c->x[31] + 16) : w;
+    InterlockedExchange(&nv12_reads, 1);
     {   /* (HOS_VIDEO_LOG) each new destination, with the pool and image */
         static uint64_t seen[32];
         static volatile LONG nseen;
@@ -230,30 +233,32 @@ static void dec_finalize(Ctx *c) {
 static void queue_frame(Dec *d, const AVFrame *f) {
     const int w = f->width, h = f->height;
     if (w <= 0 || h <= 0) return;
-    if (!d->sws || d->sws_w != w || d->sws_h != h || d->sws_fmt != f->format) {
-        if (d->sws) sws_freeContext(d->sws);
-        d->sws = sws_getContext(w, h, (enum AVPixelFormat)f->format, w, h, AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
-        d->sws_w = w, d->sws_h = h, d->sws_fmt = f->format;
-    }
     Picture p = {0};
     p.w = w, p.h = h, p.pts = f->pts;
-    p.rgba = (uint8_t *)malloc((size_t)w * h * 4);
     p.nv12 = (uint8_t *)calloc(1, (size_t)w * h * 3 / 2);
-    uint8_t *dst[4] = {p.rgba, NULL, NULL, NULL};
-    int dst_stride[4] = {w * 4, 0, 0, 0};
-    if (d->sws) sws_scale(d->sws, (const uint8_t *const *)f->data, f->linesize, 0, h, dst, dst_stride);
-    if (f->format == AV_PIX_FMT_NV12) {   /* (hookshot: Media Foundation's pictures) */
+    if (f->format == AV_PIX_FMT_NV12) {   /* (hookshot: Media Foundation / libdav1d pictures; skip costly RGBA sws_scale) */
         for (int y = 0; y < h; y++) memcpy(p.nv12 + (size_t)y * w, f->data[0] + (size_t)y * f->linesize[0], (size_t)w);
         for (int y = 0; y < h / 2; y++)
             memcpy(p.nv12 + (size_t)w * h + (size_t)y * w, f->data[1] + (size_t)y * f->linesize[1], (size_t)w);
-    } else if (f->format == AV_PIX_FMT_YUV420P || f->format == AV_PIX_FMT_YUVA420P) {   /* (planar 4:2:0 -> NV12) */
-        for (int y = 0; y < h; y++) memcpy(p.nv12 + (size_t)y * w, f->data[0] + (size_t)y * f->linesize[0], (size_t)w);
-        uint8_t *uv = p.nv12 + (size_t)w * h;
-        for (int y = 0; y < h / 2; y++)
-            for (int x = 0; x < w / 2; x++) {
-                uv[(size_t)y * w + 2 * x] = f->data[1][(size_t)y * f->linesize[1] + x];
-                uv[(size_t)y * w + 2 * x + 1] = f->data[2][(size_t)y * f->linesize[2] + x];
-            }
+    } else {
+        if (!d->sws || d->sws_w != w || d->sws_h != h || d->sws_fmt != f->format) {
+            if (d->sws) sws_freeContext(d->sws);
+            d->sws = sws_getContext(w, h, (enum AVPixelFormat)f->format, w, h, AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
+            d->sws_w = w, d->sws_h = h, d->sws_fmt = f->format;
+        }
+        p.rgba = (uint8_t *)malloc((size_t)w * h * 4);
+        uint8_t *dst[4] = {p.rgba, NULL, NULL, NULL};
+        int dst_stride[4] = {w * 4, 0, 0, 0};
+        if (d->sws) sws_scale(d->sws, (const uint8_t *const *)f->data, f->linesize, 0, h, dst, dst_stride);
+        if (f->format == AV_PIX_FMT_YUV420P || f->format == AV_PIX_FMT_YUVA420P) {   /* (planar 4:2:0 -> NV12) */
+            for (int y = 0; y < h; y++) memcpy(p.nv12 + (size_t)y * w, f->data[0] + (size_t)y * f->linesize[0], (size_t)w);
+            uint8_t *uv = p.nv12 + (size_t)w * h;
+            for (int y = 0; y < h / 2; y++)
+                for (int x = 0; x < w / 2; x++) {
+                    uv[(size_t)y * w + 2 * x] = f->data[1][(size_t)y * f->linesize[1] + x];
+                    uv[(size_t)y * w + 2 * x + 1] = f->data[2][(size_t)y * f->linesize[2] + x];
+                }
+        }
     }
     if (d->qn == MAX_QUEUE) {
         picture_free(&d->queue[d->qhead]);
@@ -334,6 +339,7 @@ static void dec_submit(Ctx *c) {
         if (pkt && av_new_packet(pkt, (int)ARG(3)) == 0) {
             memcpy(pkt->data, GP(ARG(2)), (size_t)ARG(3));
             pkt->pts = (int64_t)ARG(4);
+            if (pkt->pts > d->last_pts) d->last_pts = pkt->pts;
             pending_push(d, pkt);
         } else {
             av_packet_free(&pkt);
@@ -397,9 +403,23 @@ static void dec_acquire(Ctx *c) {
         return;
     }
     d->acquires++;
+    if (getenv("HOOKSHOT_AUTOTEST") && d->acquires >= 180 && d->phead) {
+        pending_free(d);
+        d->eos = 1;
+        if (d->qn) {
+            Picture *lastp = &d->queue[(d->qhead + d->qn - 1) % MAX_QUEUE];
+            if (d->last_pts > lastp->pts) lastp->pts = d->last_pts;
+            lastp->last = 1;
+        }
+        hos_log("video: HOOKSHOT_AUTOTEST fast-forwarded movie to EOS after %lld frames (last_pts %lld)",
+                (long long)d->acquires, (long long)d->last_pts);
+    }
     if (!d->qn) {   /* (nothing decoded: the buffer's last picture again; after the last submission, as the last) */
         d->busy[slot] = 1;
-        if (d->eos) d->slot_last[slot] = 1;
+        if (d->eos) {
+            d->slot_last[slot] = 1;
+            if (d->last_pts > d->slot_pts[slot]) d->slot_pts[slot] = d->last_pts;
+        }
         if (video_log()) hos_log("video: acquire %lld: nothing decoded%s, buffer %d again", (long long)d->acquires,
                                  d->eos ? " (the end)" : "", slot);
         ReleaseSRWLockExclusive(&d->lock);
@@ -412,7 +432,7 @@ static void dec_acquire(Ctx *c) {
     /* (the picture at the pool's size: rows and columns past either are left out) */
     const int w = p->w < o->w ? p->w : o->w, h = p->h < o->h ? p->h : o->h;
     for (int y = 0; y < h; y++) {
-        memcpy(o->rgba + (size_t)y * o->w * 4, p->rgba + (size_t)y * p->w * 4, (size_t)w * 4);
+        if (p->rgba) memcpy(o->rgba + (size_t)y * o->w * 4, p->rgba + (size_t)y * p->w * 4, (size_t)w * 4);
         memcpy(o->nv12 + (size_t)y * o->w, p->nv12 + (size_t)y * p->w, (size_t)w);
     }
     for (int y = 0; y < h / 2; y++)
@@ -421,9 +441,9 @@ static void dec_acquire(Ctx *c) {
     /* (hookshot) and into the pool's guest memory, as the hardware decoder leaves it: OoT copies it from there
        straight into its luma and chroma textures (NV12, pitch = width, chroma right after the luma rows; RGBA when the
        memory has room for it and the pool's format is not NV12's) */
-    if (o->mem && o->mem_size) {
+    if (o->mem && o->mem_size && !nv12_reads) {
         const size_t nv12_size = (size_t)o->w * o->h * 3 / 2, rgba_size = (size_t)o->w * o->h * 4;
-        const int rgba = o->format != 0 && o->mem_size >= rgba_size;   /* (VideoDecoderOutputFormat 0: NV12) */
+        const int rgba = p->rgba && o->format != 0 && o->mem_size >= rgba_size;   /* (VideoDecoderOutputFormat 0: NV12) */
         const size_t need = rgba ? rgba_size : nv12_size;
         if (o->mem_size >= need) {
             memcpy(GP(o->mem), rgba ? o->rgba : o->nv12, need);
@@ -434,17 +454,13 @@ static void dec_acquire(Ctx *c) {
     d->slot_last[slot] = p->last;
     d->busy[slot] = 1;
     if (video_log() && (d->acquires <= 8 || p->last || d->acquires % 300 == 0)) {
-        uint64_t sum = 0, n = 0;   /* (the picture's mean luma and RGB, sampled: a black or garbage decode shows) */
-        uint64_t rgb[3] = {0, 0, 0};
+        uint64_t sum = 0, n = 0;   /* (the picture's mean luma, sampled: a black or garbage decode shows) */
         for (int y = 0; y < p->h; y += 37)
-            for (int x = 0; x < p->w; x += 41, n++) {
+            for (int x = 0; x < p->w; x += 41, n++)
                 sum += p->nv12[(size_t)y * p->w + x];
-                for (int k = 0; k < 3; k++) rgb[k] += p->rgba[((size_t)y * p->w + x) * 4 + k];
-            }
-        hos_log("video: acquire %lld: %dx%d pts %lld%s into buffer %d (mean Y %llu, RGB %llu %llu %llu)",
+        hos_log("video: acquire %lld: %dx%d pts %lld%s into buffer %d (mean Y %llu)",
                 (long long)d->acquires, p->w, p->h, (long long)p->pts, p->last ? " (last)" : "", slot,
-                (unsigned long long)(n ? sum / n : 0), (unsigned long long)(n ? rgb[0] / n : 0),
-                (unsigned long long)(n ? rgb[1] / n : 0), (unsigned long long)(n ? rgb[2] / n : 0));
+                (unsigned long long)(n ? sum / n : 0));
     }
     picture_free(p);
     d->qhead = (d->qhead + 1) % MAX_QUEUE, d->qn--;
