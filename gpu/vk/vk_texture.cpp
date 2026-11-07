@@ -1526,6 +1526,8 @@ void pass_barrier(VkCommandBuffer cmd) {
                      VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
                      VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT |
                      VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
+                     VK_PIPELINE_STAGE_2_TASK_SHADER_BIT_EXT |
+                     VK_PIPELINE_STAGE_2_MESH_SHADER_BIT_EXT |
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
     b.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
     b.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT |

@@ -870,7 +870,6 @@ void maybe_split(VkCommandBuffer& cmd) {
     ub_first_of_recording = ub_updates.size();
     Recording& r = begin_recording(rec_cur_value);
     memory_begin_submission();
-    full_barrier(r.cmd);
     rec_cur = &r;
     cmd = r.cmd;
     part_work = 0;
@@ -953,7 +952,6 @@ void record_segment(VkCommandBuffer& cmd, const Segment& g) {
     NvnState s = *g.s;
     ub_limit = g.ub, cond_at = g.cond;
     ub_gen++;
-    full_barrier(cmd);   // (after what the command buffers before it did)
     replay(cmd, s, g.p, g.end);
     end_pass(cmd);
     full_barrier(cmd);
@@ -1137,7 +1135,6 @@ void bench_replay(const std::vector<uint64_t>& handles) {
     ub_first_of_recording = ub_updates.size();
     Recording& first = begin_recording(value);
     memory_begin_submission();
-    full_barrier(first.cmd);
     rec_cur = &first, rec_cur_value = value, rec_parts = 0, part_work = 0;
     VkCommandBuffer cmd = first.cmd;
     for (uint64_t h : handles)
@@ -1390,7 +1387,6 @@ bool run_submit(const uint64_t* handles, int n, uint64_t value, uint64_t queue, 
         ub_first_of_recording = ub_updates.size();
         Recording& first = begin_recording(tag);
         memory_begin_submission();
-        full_barrier(first.cmd);
         rec_cur = &first, rec_cur_value = tag, rec_parts = 0, part_work = 0;
     }
     VkCommandBuffer cmd = rec_cur->cmd;
