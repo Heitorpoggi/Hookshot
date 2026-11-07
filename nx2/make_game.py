@@ -295,12 +295,14 @@ def main():
     # (made once on the development PC: lists of addresses and counts, no game code)
     for name in ("hot_funcs.txt", "hot_order.txt", "hookshot_pieces.prof", "hookshot.res"):
         src = os.path.join(ROOT, "work", name)
-        if os.path.exists(src):
-            shutil.copy2(src, os.path.join(work, name))
+        dst = os.path.join(work, name)
+        if os.path.exists(src) and os.path.abspath(src) != os.path.abspath(dst):
+            shutil.copy2(src, dst)
     os.makedirs(os.path.join(work, "image"), exist_ok=True)
     src = os.path.join(ROOT, "work", "image", "chunks.txt")   # (where the lifted code's files begin: addresses)
-    if os.path.exists(src):
-        shutil.copy2(src, os.path.join(work, "image", "chunks.txt"))
+    dst = os.path.join(work, "image", "chunks.txt")
+    if os.path.exists(src) and os.path.abspath(src) != os.path.abspath(dst):
+        shutil.copy2(src, dst)
     env = {"OOT_WORK": work, "OOT_EXEFS": exefs, "OOT_ROMFS": romfs, "OOT_DUMP": out, "RX_RELEASE": "1", "A64_HOT_CHUNK": "1"}
     if os.path.exists(os.path.join(work, "hot_funcs.txt")):
         env["A64_HOT_FUNCS"] = os.path.join(work, "hot_funcs.txt")
