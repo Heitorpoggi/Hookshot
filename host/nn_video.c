@@ -67,7 +67,9 @@ typedef struct {
     int slot_last[MAX_SLOTS];        /* the stream's last picture (the submission marked last, all decoded) */
     Picture queue[MAX_QUEUE];
     int qhead, qn;
-    int eos, input_eos, flushed;     /* the last submission is in and decoded: an empty queue is the end */
+    int eos, input_eos;              /* the last submission is in and decoded: an empty queue is the end */
+    int flushed, pad_flushed;
+    uint64_t sync_event;
     Pending *phead, *ptail;          /* submissions not decoded yet, oldest first */
     int64_t submits, acquires, last_pts;
     SRWLOCK lock;
@@ -335,6 +337,8 @@ static void dec_submit(Ctx *c) {
     }
     AcquireSRWLockExclusive(&d->lock);
     d->flushed = 0;
+    uint64_t ev = d->sync_event;
+    d->sync_event = 0;
     if (ARG(2) && ARG(3)) {
         AVPacket *pkt = av_packet_alloc();
         if (pkt && av_new_packet(pkt, (int)ARG(3)) == 0) {
@@ -355,6 +359,7 @@ static void dec_submit(Ctx *c) {
         hos_log("video: submit %lld (%llu bytes, pts %lld%s)", (long long)d->submits, (unsigned long long)ARG(3),
                 (long long)ARG(4), (ARG(5) & 1) ? ", last" : "");
     ReleaseSRWLockExclusive(&d->lock);
+    if (ev) hos_system_event_signal(ev);
     RET(0);
 }
 static void dec_flush(Ctx *c) {

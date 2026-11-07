@@ -6,6 +6,7 @@
 
 void hos_system_event_init(uint64_t key, int autoclear);   /* nn_os_sync.c */
 void hos_system_event_signal(uint64_t key);
+void hos_system_event_clear(uint64_t key);
 void imp__ZN2nn2os25InitializeMultiWaitHolderEPNS0_19MultiWaitHolderTypeEPNS0_15SystemEventTypeE(Ctx *c);
 
 HLE(_ZN2nn6syncpt17GetLibraryVersionEv) { RET(1); }
@@ -13,7 +14,13 @@ HLE(_ZN2nn6syncpt3sdk12InitializeExEPvmNS1_14LibraryOptionsE) { RET(0); }
 
 /* sync points: reached */
 HLE(_ZN2nn6syncpt3sdk13WaitSyncPointERKNS1_15SyncPointHandleE) { RET(0); }
-HLE(_ZN2nn6syncpt3sdk16TryWaitSyncPointERKNS1_15SyncPointHandleE) { RET(1); }
+HLE(_ZN2nn6syncpt3sdk16TryWaitSyncPointERKNS1_15SyncPointHandleE) {
+    if (ARG(0) && G64(ARG(0) + 8) == 0xdeadbeefULL && G64(ARG(0)) && *(volatile int *)(uintptr_t)G64(ARG(0))) {
+        RET(0);
+        return;
+    }
+    RET(1);
+}
 HLE(_ZN2nn6syncpt3sdk18TimedWaitSyncPointERKNS1_15SyncPointHandleENS_8TimeSpanE) { RET(1); }
 
 /* sync point events: system events (the object's storage is the game's) */
@@ -23,10 +30,18 @@ HLE(_ZN2nn6syncpt3sdk20CreateSyncPointEventEPNS1_18SyncPointEventTypeE) {
 }
 HLE(_ZN2nn6syncpt3sdk21DestroySyncPointEventEPNS1_18SyncPointEventTypeE) {}
 HLE(_ZN2nn6syncpt3sdk21RequestSyncPointEventEPNS1_18SyncPointEventTypeERKNS1_15SyncPointHandleE) {
+    if (ARG(1) && G64(ARG(1) + 8) == 0xdeadbeefULL && G64(ARG(1)) && *(volatile int *)(uintptr_t)G64(ARG(1))) {
+        *(volatile uint64_t *)((uintptr_t)G64(ARG(1)) + 8) = ARG(0);
+        hos_system_event_clear(ARG(0));
+        RET(0);
+        return;
+    }
     hos_system_event_signal(ARG(0));
     RET(0);
 }
-HLE(_ZN2nn6syncpt3sdk20CancelSyncPointEventEPNS1_18SyncPointEventTypeE) {}
+HLE(_ZN2nn6syncpt3sdk20CancelSyncPointEventEPNS1_18SyncPointEventTypeE) {
+    hos_system_event_clear(ARG(0));
+}
 HLE(_ZN2nn6syncpt3sdk21TryWaitSyncPointEventEPKNS1_18SyncPointEventTypeE) { RET(1); }
 /* InitializeMultiWaitHolder(holder, SyncPointEventType*): as for a system event */
 HLE(_ZN2nn6syncpt3sdk25InitializeMultiWaitHolderEPNS_2os19MultiWaitHolderTypeEPNS1_18SyncPointEventTypeE) {

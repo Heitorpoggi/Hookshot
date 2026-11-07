@@ -667,6 +667,7 @@ HLE(_ZN2nn2os19TimedWaitLightEventEPNS0_14LightEventTypeENS_8TimeSpanE) {
 /* System events are created by other HLE APIs (vsync, audio device changes ...) with hos_system_event_init. */
 void hos_system_event_init(uint64_t key, int autoclear) { event_init(key, 0, autoclear); }
 void hos_system_event_signal(uint64_t key) { event_signal(obj(key, K_EVENT)); }
+void hos_system_event_clear(uint64_t key) { event_clear(obj(key, K_EVENT)); }
 HLE(_ZN2nn2os18DestroySystemEventEPNS0_15SystemEventTypeE) { drop(ARG(0)); }
 HLE(_ZN2nn2os16ClearSystemEventEPNS0_15SystemEventTypeE) { event_clear(obj(ARG(0), K_EVENT)); }
 HLE(_ZN2nn2os15WaitSystemEventEPNS0_15SystemEventTypeE) { logged_wait(c, obj(ARG(0), K_EVENT), 0, 0, "system"); }
