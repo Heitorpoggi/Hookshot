@@ -1288,8 +1288,12 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
     {   // huge textures leave out their top levels: wider than RX_VK_TEX_MAX_DIM (default 2048) once they would take
         // 64 MB, and down to RX_VK_TEX_MAX_MB (default 512) whatever their size (MKW's terrain material arrays are
         // 8192 x 8192 x 68 ASTC: 24 GB as RGBA8)
-        static const uint32_t max_dim = getenv("RX_VK_TEX_MAX_DIM") ? (uint32_t)atoi(getenv("RX_VK_TEX_MAX_DIM")) : 2048;
-        static const uint64_t max_bytes = (uint64_t)(getenv("RX_VK_TEX_MAX_MB") ? atoi(getenv("RX_VK_TEX_MAX_MB")) : 1536) << 20;
+        static const uint64_t max_bytes = [] {
+            if (const char* e = getenv("RX_VK_TEX_MAX_MB")) return (uint64_t)atoi(e) << 20;
+            uint64_t u = 0, a = 0;
+            if (vram_usage(&u, &a) && a && a <= (4600ull << 20)) return (uint64_t)(384ull << 20);
+            return (uint64_t)(1536ull << 20);
+        }();
         const uint32_t texel = astc ? 4 : std::max(1, bpb / std::max(1, bw * bh));
         auto bytes_at = [&](uint32_t skip) {
             uint64_t px = 0;
