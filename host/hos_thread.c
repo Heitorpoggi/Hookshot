@@ -784,7 +784,7 @@ void hos_sleep_logged(int64_t ns, uint64_t lr) {
 static int present_poll(Ctx *c, int64_t ns) {
     static int on = -1;
     static uint64_t fn_ok, fn_bad;
-    if (on < 0) on = getenv("HOS_PRESENT_POLL") && atoi(getenv("HOS_PRESENT_POLL")) != 0;
+    if (on < 0) on = getenv("HOS_PRESENT_POLL") ? atoi(getenv("HOS_PRESENT_POLL")) != 0 : 0;
     if (!on || c->x[30] != 0x80590520 || ns <= 0 || ns > 20000000) return 0;
     const uint64_t fp = G64(c->x[24]);
     if (fp != fn_ok) {

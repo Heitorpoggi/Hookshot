@@ -2525,10 +2525,10 @@ void texture_frame(uint64_t completed) {
     if ((frame_no % 10) && (!own || total_bytes <= own)) return;
     uint64_t used = 0, allowed = 0, block_free = 0;
     const bool known = vram_usage(&used, &allowed, &block_free);
-    if (!own)   // (RX_VK_VRAM_MB, else 70% of what the driver allows the process at the first look; 2200 MB on <= 4.6 GB cards)
+    if (!own)   // (RX_VK_VRAM_MB, else 70% of what the driver allows the process at the first look; 1900 MB on <= 4.6 GB cards)
         own = getenv("RX_VK_VRAM_MB") ? (uint64_t)atoi(getenv("RX_VK_VRAM_MB")) << 20
               : known                ? (allowed <= (4600ull << 20)
-                                            ? std::min<uint64_t>(allowed * 60 / 100, 2200ull << 20)
+                                            ? std::min<uint64_t>(allowed * 54 / 100, 2048ull << 20)
                                             : std::min<uint64_t>(allowed / 10 * 7, 6144ull << 20))   // (hookshot: at most 6 GB. A 16 GB
                                                                                                      // card's 10.8 GB filled up, read as a leak: 105, 106)
                                      : 4096ull << 20;

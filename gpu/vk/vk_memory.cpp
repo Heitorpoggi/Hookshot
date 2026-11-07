@@ -328,7 +328,7 @@ bool gpu_pages_on() {
 }
 void memory_stamp_gpu(uint64_t guest, uint64_t size) {
     if (!size) return;
-    memory_stamp(guest, size);
+    memory_drop_shadow(guest, size);
     if (!gpu_pages_on()) return;
     std::lock_guard lk(gpu_pages_mu);
     const uint64_t p0 = guest >> kPageShift, p1 = (guest + size - 1) >> kPageShift;
@@ -1198,13 +1198,13 @@ bool mirror_on() {
     return on != 0;
 }
 uint64_t mirror_budget() {
-    // (a quarter of the card, at most the 3 GB it was for all; 640 MB on <= 4.6 GB cards now that host_visible buffers are in host RAM)
+    // (a quarter of the card, at most the 3 GB it was for all; 1088 MB on <= 4.6 GB cards now that host_visible buffers are in host RAM)
     static const uint64_t b = [] {
         if (const char* e = getenv("RX_VK_MIRROR_MB")) return (uint64_t)atoi(e) << 20;
         uint64_t vram = 0;
         for (uint32_t h = 0; h < dev.memory.memoryHeapCount; h++)
             if (dev.memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) vram = std::max(vram, (uint64_t)dev.memory.memoryHeaps[h].size);
-        if (vram && vram <= (4600ull << 20)) return (uint64_t)(640ull << 20);
+        if (vram && vram <= (4600ull << 20)) return (uint64_t)(1088ull << 20);
         return vram ? std::min<uint64_t>(vram / 4, 3072ull << 20) : (uint64_t)(3072ull << 20);
     }();
     return b;
@@ -1556,7 +1556,7 @@ bool mirror_make(Pool& pool) {
     Pool* p = &pool;
     {
         const uint64_t n = p->hi - p->lo;
-        const uint64_t max_pool = mirror_budget() <= (640ull << 20) ? (192ull << 20) : (1ull << 30);
+        const uint64_t max_pool = mirror_budget() <= (1088ull << 20) ? (320ull << 20) : (1ull << 30);
         if (mirror_bytes + n > mirror_budget() && n <= max_pool) mirrors_give_back(n);
         if (mirror_bytes + n > mirror_budget() || n > max_pool) {
             p->mstate = n > max_pool ? Pool::MIRROR_REFUSED : Pool::MIRROR_NONE;
@@ -1568,7 +1568,7 @@ bool mirror_make(Pool& pool) {
             return false;
         }
         if (!create_device_buffer(n, kUsage, p->mirror, p->mirror_alloc)) {
-            p->mstate = Pool::MIRROR_REFUSED;
+            p->mstate = Pool::MIRROR_NONE;
             return false;
         }
         {   // (hookshot) the page table points at the mirror: what the GPU wrote is there, and guest memory has it only after the write-back
