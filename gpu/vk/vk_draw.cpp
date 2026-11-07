@@ -3247,7 +3247,9 @@ bool upscale_stub(VkCommandBuffer cmd, const NvnState& s, uint64_t key) {
         if (t.d.depth > 1 || t.d.target != out.d.target) continue;
         if (std::find(img_gpu, img_gpu + nimg, t.gpu) != img_gpu + nimg) continue;   // (the network's own buffers)
         const uint64_t a = (uint64_t)t.d.width * t.d.height;
-        if (a > in_area) in = t, in_area = a, in_h = s.tex[5][i];
+        const bool same_fmt = t.d.format == out.d.format;
+        const bool had_same_fmt = in_area && in.d.format == out.d.format;
+        if (same_fmt != had_same_fmt ? same_fmt : a > in_area) in = t, in_area = a, in_h = s.tex[5][i];
     }
     if (!in_area || out_area <= in_area) return false;
     Texture* src = texture_get(&in, true);

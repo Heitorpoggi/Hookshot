@@ -1569,13 +1569,18 @@ Texture* texture_touch(Texture* tex, bool for_sampling) {
     tex->last_frame = frame_no;
     tex->last_value = rec_value;
     if (!for_sampling) return tex;
+    if (is_depth_format(tex->format)) {
+        tex->uploaded = true;
+        tex->checked_epoch = epoch;
+        return tex;
+    }
     // contents: from guest memory unless the GPU wrote the image (then it is the content, unless the texture was
     // finalized since and the CPU writes its memory again). What the CPU writes into it after the GPU's write is taken
     // all the same, those ranges alone, the rest staying the GPU's: Eden's texture cache takes a CPU write over the
     // GPU's contents, and MKW's font cache is cleared on the GPU with its glyphs written by the CPU as text appears
     // (the menus were missing every letter added later). Only whole pages of its storage: a write to another variable
     // sharing an edge page once re-uploaded garbage over a drawn LUT (the rainbow sky). Opt-in (RX_VK_CPU_OVER_GPU=1): transient render targets share memory the CPU writes for other things, and took that over their texels, and the menus' letters stayed missing with it.
-    if (tex->gpu_written && !tex->released) {
+    if (tex->gpu_written) {
         // (hookshot) and a texture the GPU only cleared: the game's font cache, whose letters the CPU writes as text appears. Its menu text
         // went missing at random (Hookshot issues 40 and 44), whenever the clear reached the image first
         static const bool take = getenv("RX_VK_CPU_OVER_GPU") != nullptr;
@@ -1632,7 +1637,7 @@ Texture* texture_touch(Texture* tex, bool for_sampling) {
     static const bool no_partial = getenv("RX_VK_NO_PARTIAL") != nullptr;   // (A/B: whole re-uploads)
     // (a buffer the GPU wrote over its storage, done since: all of it again; the tiles of MKW's terrain are filled so
     // and stayed the flat placeholder they were made with)
-    const bool gpu_dirty = tex->uploaded && gpu_wrote_into(*tex);
+    const bool gpu_dirty = tex->uploaded && !tex->gpu_written && gpu_wrote_into(*tex);
     const bool partial = !no_partial && !gpu_dirty && tex->uploaded && !tex->gpu_written && !tex->released;
     // (a texture the GPU drew and the game finalized: only what the CPU wrote since then. Its memory never got the
     // GPU's texels, and a write before (another variable in the same page) re-uploaded garbage over a drawn LUT:
@@ -2190,7 +2195,8 @@ bool texture_touch_quick(Texture* tex, bool for_sampling) {
     tex->last_frame = frame_no;   // (the same values whichever thread stores them)
     tex->last_value = rec_value;
     if (!for_sampling) return true;
-    if (tex->gpu_written && !tex->released && !tex->only_cleared) return true;
+    if (is_depth_format(tex->format)) return true;
+    if (tex->gpu_written && !tex->only_cleared) return true;
     if (tex->upload_value == rec_value && tex->upload_seg > tl_seg) return false;
     return tex->uploaded && tex->checked_epoch == epoch;
 }
