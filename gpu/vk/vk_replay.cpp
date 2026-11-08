@@ -82,11 +82,13 @@ uint64_t completed() {
     return v;
 }
 void wait_value(uint64_t v) {
+    const uint64_t max_p = pushed.load(std::memory_order_acquire);
+    if (!v || v > max_p) return;
     VkSemaphoreWaitInfo wi{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
     wi.semaphoreCount = 1;
     wi.pSemaphores = &timeline;
     wi.pValues = &v;
-    vkWaitSemaphores(dev.device, &wi, UINT64_MAX);
+    vkWaitSemaphores(dev.device, &wi, 50000000ull);
 }
 
 namespace {

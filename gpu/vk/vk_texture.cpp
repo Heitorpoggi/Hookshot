@@ -2573,8 +2573,9 @@ void texture_evict_vram(uint64_t needed_bytes, bool force) {
         if (it->value > completed_value) {
             if (force) {
                 wait_value(it->value);
-                completed_value = std::max(completed_value, it->value);
-            } else {
+                completed_value = std::max(completed_value, completed());
+            }
+            if (it->value > completed_value) {
                 ++it;
                 continue;
             }
@@ -2634,10 +2635,9 @@ void texture_evict_vram(uint64_t needed_bytes, bool force) {
         if (tex->last_value > completed_value) {
             if (force) {
                 wait_value(tex->last_value);
-                completed_value = std::max(completed_value, tex->last_value);
-            } else {
-                continue;
+                completed_value = std::max(completed_value, completed());
             }
+            if (tex->last_value > completed_value) continue;
         }
 
         bool overwritten = false;
@@ -2676,8 +2676,9 @@ void texture_evict_vram(uint64_t needed_bytes, bool force) {
         if (it->value > completed_value) {
             if (force) {
                 wait_value(it->value);
-                completed_value = std::max(completed_value, it->value);
-            } else {
+                completed_value = std::max(completed_value, completed());
+            }
+            if (it->value > completed_value) {
                 ++it;
                 continue;
             }
