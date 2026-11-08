@@ -26,6 +26,7 @@ struct NvnState {
     int nvattr = 0;
     nvn_vs_st vstream[16]{};
     NVNbufferRange vbuf[16]{};
+    uint64_t vb_serial = 0;      // bumped at each NOP_BIND_VBUF / NOP_BIND_VSTREAM (draw vertex buffer caching)
     nvn_p_set_rt rt{};
     uint64_t rt_serial = 0;      // bumped at each NOP_SET_RT (the draw path resolves the targets once per change)
     uint64_t bind_gen = 0;       // bumped by every binding the descriptors read (program, buffers, handles, pools)

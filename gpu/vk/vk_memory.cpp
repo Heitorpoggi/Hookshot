@@ -57,7 +57,13 @@ struct GuestPool {
 std::vector<GuestPool> guest_pools;   // by lo, from the host
 std::map<uint64_t, Pool> imported;    // by lo, made on first use
 Pool* last_pool = nullptr;            // (the last pool_of hit: draws in a row bind buffers of the same pools)
-extern Pool* pool_cache[4096];
+constexpr size_t kPoolCacheSize = 16384;
+constexpr uint64_t kPoolCacheMask = kPoolCacheSize - 1;
+
+static inline size_t pool_hash(uint64_t guest) {
+    return ((guest >> 16) ^ (guest >> 26)) & kPoolCacheMask;
+}
+extern Pool* pool_cache[kPoolCacheSize];
 void retire_pool(std::map<uint64_t, Pool>::iterator it);
 Pool* pool_lookup(uint64_t guest, uint64_t size);
 struct SrwMutex {   // (a slim reader/writer lock: half std::mutex's cost, taken for every buffer a draw binds)
@@ -997,17 +1003,20 @@ namespace {
 
 /// The imported pool holding [guest, guest + size) (imported now if it was not yet); null outside the pools.
 /// pools_mu held.
-Pool* pool_cache[4096];   // (by 64 KB page: the pools buffer bindings hit lately)
+Pool* pool_cache[kPoolCacheSize];   // (by 64 KB page with higher bits mixed: the pools buffer bindings hit lately)
 std::atomic<uint64_t> pools_gen{1};   // (bumped when a pool leaves the table: the recording threads' caches go stale)
+uint64_t pools_generation() {
+    return pools_gen.load(std::memory_order_relaxed);
+}
 struct TlPool {
     Pool* p;
     uint64_t gen;
 };
-thread_local TlPool tl_pools[1024];   // (a parallel replay thread's: by 64 KB page, read without the lock)
+thread_local TlPool tl_pools[kPoolCacheSize];   // (a parallel replay thread's: by 64 KB page, read without the lock)
 
 Pool* pool_of(uint64_t guest, uint64_t size) {
     if (last_pool && guest >= last_pool->lo && guest + size <= last_pool->hi) return last_pool;
-    Pool*& slot = pool_cache[(guest >> 16) & 4095];
+    Pool*& slot = pool_cache[pool_hash(guest)];
     if (slot && guest >= slot->lo && guest + size <= slot->hi) return last_pool = slot;
     Pool* found = pool_lookup(guest, size);
     if (found) slot = found;
@@ -1408,7 +1417,7 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
     // without the lock: every thread's, the replay thread's too (each draw binds several uniform buffers: the pool's
     // lookup under the lock was ~8% of the replay's time in a race); the rest under it, as below)
     const bool par = par_active.load(std::memory_order_relaxed);
-    TlPool& tl = tl_pools[(guest >> 16) & 1023];
+    TlPool& tl = tl_pools[pool_hash(guest)];
     if (!written && tl.p && tl.gen == pools_gen.load(std::memory_order_relaxed) && guest >= tl.p->lo &&
         guest + size <= tl.p->hi) {
         Pool* p = tl.p;
@@ -1614,6 +1623,7 @@ bool mirror_make(Pool& pool) {
             }
         }
         p->mstate = Pool::MIRROR_ON;
+        pools_gen++;
         p->synced_gen = gen_now;
         p->synced_epoch = mirror_epoch;
         p->bound_epoch = mirror_epoch;

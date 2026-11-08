@@ -1717,7 +1717,12 @@ thread_local bool last_desc_valid = false;
 thread_local const Program* last_desc_prog = nullptr;
 thread_local uint64_t last_desc_bind = 0, last_desc_reg = 0, last_desc_ub = 0;
 thread_local VkPipeline last_pipeline = VK_NULL_HANDLE;
-struct LastVb { VkBuffer b[16]; VkDeviceSize o[16], z[16], s[16]; };
+struct LastVb {
+    VkBuffer b[16];
+    VkDeviceSize o[16], z[16], s[16];
+    uint64_t vb_serial = ~0ull;
+    uint64_t pools_gen = ~0ull;
+};
 thread_local LastVb last_vb;
 thread_local bool last_vb_valid = false;
 int64_t st_desc_reused;
@@ -3067,21 +3072,26 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         return;
     }
     // vertex streams (from their pools, strides dynamic) and the zero stream
-    VkBuffer vbufs[16];
-    VkDeviceSize voffs[16], vsizes[16], vstrides[16];
-    for (uint32_t b = 0; b < 16; b++) {
-        vbufs[b] = zero_buffer, voffs[b] = 0, vsizes[b] = 65536, vstrides[b] = 0;
-        if (b == 15 || !s.vbuf[b].address) continue;
-        BufferRef r = gpu_buffer_bind(s.vbuf[b].address, std::max<uint64_t>(s.vbuf[b].size, 1), false);
-        if (!r) continue;
-        vbufs[b] = r.buffer, voffs[b] = r.offset, vsizes[b] = s.vbuf[b].size ? s.vbuf[b].size : VK_WHOLE_SIZE;
-        vstrides[b] = s.vstream[b].stride;
-    }
-    if (!last_vb_valid || std::memcmp(vbufs, last_vb.b, sizeof vbufs) || std::memcmp(voffs, last_vb.o, sizeof voffs) ||
-        std::memcmp(vsizes, last_vb.z, sizeof vsizes) || std::memcmp(vstrides, last_vb.s, sizeof vstrides)) {
-        vkCmdBindVertexBuffers2(cmd, 0, 16, vbufs, voffs, vsizes, vstrides);
-        std::memcpy(last_vb.b, vbufs, sizeof vbufs), std::memcpy(last_vb.o, voffs, sizeof voffs);
-        std::memcpy(last_vb.z, vsizes, sizeof vsizes), std::memcpy(last_vb.s, vstrides, sizeof vstrides);
+    const uint64_t pgen = pools_generation();
+    if (!last_vb_valid || last_vb.vb_serial != s.vb_serial || last_vb.pools_gen != pgen) {
+        VkBuffer vbufs[16];
+        VkDeviceSize voffs[16], vsizes[16], vstrides[16];
+        for (uint32_t b = 0; b < 16; b++) {
+            vbufs[b] = zero_buffer, voffs[b] = 0, vsizes[b] = 65536, vstrides[b] = 0;
+            if (b == 15 || !s.vbuf[b].address) continue;
+            BufferRef r = gpu_buffer_bind(s.vbuf[b].address, std::max<uint64_t>(s.vbuf[b].size, 1), false);
+            if (!r) continue;
+            vbufs[b] = r.buffer, voffs[b] = r.offset, vsizes[b] = s.vbuf[b].size ? s.vbuf[b].size : VK_WHOLE_SIZE;
+            vstrides[b] = s.vstream[b].stride;
+        }
+        if (!last_vb_valid || std::memcmp(vbufs, last_vb.b, sizeof vbufs) || std::memcmp(voffs, last_vb.o, sizeof voffs) ||
+            std::memcmp(vsizes, last_vb.z, sizeof vsizes) || std::memcmp(vstrides, last_vb.s, sizeof vstrides)) {
+            vkCmdBindVertexBuffers2(cmd, 0, 16, vbufs, voffs, vsizes, vstrides);
+            std::memcpy(last_vb.b, vbufs, sizeof vbufs), std::memcpy(last_vb.o, voffs, sizeof voffs);
+            std::memcpy(last_vb.z, vsizes, sizeof vsizes), std::memcpy(last_vb.s, vstrides, sizeof vstrides);
+        }
+        last_vb.vb_serial = s.vb_serial;
+        last_vb.pools_gen = pgen;
         last_vb_valid = true;
     }
     const VkIndexType itype = d.itype == 0 ? VK_INDEX_TYPE_UINT8_EXT : d.itype == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;

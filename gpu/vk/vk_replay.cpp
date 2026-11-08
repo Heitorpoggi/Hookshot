@@ -204,7 +204,7 @@ void use_queue_state(uint64_t queue) {
     cur_state = s;
     static uint64_t gen_base = 0;
     gen_base += 1ull << 32;
-    s->bind_gen = gen_base, s->rt_serial = gen_base;
+    s->bind_gen = gen_base, s->rt_serial = gen_base, s->vb_serial = gen_base;
 }
 
 template <class T>
@@ -298,10 +298,32 @@ bool deferred_late() {   // (RX_VK_DEFERRED_LATE=1: deferred binds read from the
     return v;
 }
 
+uint64_t ub_min_dst = UINT64_MAX;
+uint64_t ub_max_dst = 0;
+
+void ub_recompute_bounds() {
+    ub_min_dst = UINT64_MAX;
+    ub_max_dst = 0;
+    for (const auto& u : ub_updates) {
+        ub_min_dst = std::min(ub_min_dst, u.dst);
+        ub_max_dst = std::max(ub_max_dst, u.dst + u.bytes.size());
+    }
+}
+
 void ub_prune(uint64_t done) {
+    bool any_popped = false;
     while (!ub_updates.empty() && ub_updates.front().value <= done) {
         ub_updates.pop_front();
         if (ub_first_of_recording) ub_first_of_recording--;
+        any_popped = true;
+    }
+    if (any_popped) {
+        if (ub_updates.empty()) {
+            ub_min_dst = UINT64_MAX;
+            ub_max_dst = 0;
+        } else {
+            ub_recompute_bounds();
+        }
     }
 }
 
@@ -311,10 +333,11 @@ uint64_t ub_generation() {
     return ub_gen;
 }
 uint64_t ub_overlay(uint64_t addr, uint64_t n, uint8_t* base, const std::function<uint64_t(uint64_t)>& alloc) {
-    bool any = false;
     const size_t lim = std::min(ub_limit, ub_updates.size());   // (a worker: those before its place in the stream)
     static const bool cur_only = getenv("RX_VK_UB_CUR_ONLY") != nullptr;   // (A/B: this submission's updates only)
     const size_t first = cur_only ? std::min(ub_first_of_recording, lim) : 0;
+    if (first >= lim || ub_updates.empty() || addr + n <= ub_min_dst || addr >= ub_max_dst) return UINT64_MAX;
+    bool any = false;
     for (size_t i = first; i < lim; i++) {
         const UbUpdate& u = ub_updates[i];
         if (u.dst < addr + n && addr < u.dst + u.bytes.size()) {
@@ -342,6 +365,7 @@ uint64_t ub_overlay(uint64_t addr, uint64_t n, uint8_t* base, const std::functio
 bool ub_read(uint64_t addr, void* dst, uint64_t n) {
     if (!memory_read_as_submitted(addr, dst, n)) return false;
     const size_t lim = std::min(ub_limit, ub_updates.size());
+    if (ub_updates.empty() || addr + n <= ub_min_dst || addr >= ub_max_dst) return true;
     for (size_t i = 0; i < lim; i++) {
         const UbUpdate& u = ub_updates[i];
         const uint64_t lo = std::max(addr, u.dst), hi = std::min(addr + n, u.dst + u.bytes.size());
@@ -553,6 +577,8 @@ void replay(VkCommandBuffer& cmd, NvnState& s, const uint8_t* p, const uint8_t* 
                      (unsigned long long)u.dst, (unsigned)u.size, f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8], f[9], f[10], f[11]);
             }
             if (u.size && u.size <= avail - sizeof u) {
+                ub_min_dst = std::min(ub_min_dst, (uint64_t)u.dst);
+                ub_max_dst = std::max(ub_max_dst, (uint64_t)u.dst + u.size);
                 UbUpdate up{rec_value_now, u.dst, std::vector<uint8_t>(a + sizeof u, a + sizeof u + u.size)};
                 ub_updates.push_back(std::move(up));
                 ub_gen++;
@@ -612,11 +638,13 @@ void replay(VkCommandBuffer& cmd, NvnState& s, const uint8_t* p, const uint8_t* 
         case NOP_BIND_VSTREAM: {
             const auto v = payload<nvn_p_bind_vstream>(a, avail);
             for (int i = 0; i < v.n && i < 16; i++) s.vstream[i] = v.st[i];
+            s.vb_serial++;
             break;
         }
         case NOP_BIND_VBUF: {
             const auto v = payload<nvn_p_bind_vbuf>(a, avail);
             for (int i = 0; i < v.n && v.first + i < 16; i++) s.vbuf[v.first + i] = v.r[i];
+            s.vb_serial++;
             break;
         }
         case NOP_BIND_BUFS: {
