@@ -1005,9 +1005,6 @@ namespace {
 /// pools_mu held.
 Pool* pool_cache[kPoolCacheSize];   // (by 64 KB page with higher bits mixed: the pools buffer bindings hit lately)
 std::atomic<uint64_t> pools_gen{1};   // (bumped when a pool leaves the table: the recording threads' caches go stale)
-uint64_t pools_generation() {
-    return pools_gen.load(std::memory_order_relaxed);
-}
 struct TlPool {
     Pool* p;
     uint64_t gen;
@@ -1344,6 +1341,10 @@ void mirror_sync(Pool& p) {
 }
 
 } // namespace
+
+uint64_t pools_generation() {
+    return pools_gen.load(std::memory_order_relaxed);
+}
 
 BufferRef gpu_buffer(uint64_t gpu, uint64_t size) {
     uint64_t avail = 0;
