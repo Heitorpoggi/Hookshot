@@ -1543,6 +1543,18 @@ void pass_barrier(VkCommandBuffer cmd) {
     vkCmdPipelineBarrier2(cmd, &d);
 }
 
+void inside_pass_barrier(VkCommandBuffer cmd) {
+    VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT;
+    b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT;
+    b.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    VkDependencyInfo d{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    d.memoryBarrierCount = 1;
+    d.pMemoryBarriers = &b;
+    vkCmdPipelineBarrier2(cmd, &d);
+}
+
 void texture_begin_recording(VkCommandBuffer upload, uint64_t value) {
     up_cmd = upload;
     if (value != rec_value) epoch++;   // (a submission's parts check a texture's memory once: nothing is collected between)

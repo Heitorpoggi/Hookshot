@@ -33,6 +33,7 @@ struct DrawArgs {
 void draw_begin_recording(int slot, VkCommandBuffer cmd, uint64_t value);
 /// The open render pass ends (before transfers, clears, barriers and the recording's end)
 void end_pass(VkCommandBuffer cmd);
+bool pass_is_open();
 void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d);
 /// Clears of the bound targets, inside the open pass (NOP_CLEAR_COLOR, NOP_CLEAR_DS)
 void clear_color_target(VkCommandBuffer cmd, NvnState& s, int index, const float rgba[4], uint32_t mask);

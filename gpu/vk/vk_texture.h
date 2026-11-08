@@ -168,6 +168,7 @@ uint64_t texture_bytes();
 void full_barrier(VkCommandBuffer cmd);
 void compute_barrier(VkCommandBuffer cmd);
 void pass_barrier(VkCommandBuffer cmd);
+void inside_pass_barrier(VkCommandBuffer cmd);
 void texture_stats(int64_t* uploads, int64_t* astc_gpu, int64_t* bytes_uploaded);
 /// RX_VK_DUMP_TEX: the textures uploaded next written to that folder as PPM (diagnostics)
 void texture_read_texels(const nvn_tex* t, unsigned level, unsigned layer0, const NVNcopyRegion* r, uint8_t* dst,

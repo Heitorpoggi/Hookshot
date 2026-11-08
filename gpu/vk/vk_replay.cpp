@@ -745,8 +745,11 @@ void replay(VkCommandBuffer& cmd, NvnState& s, const uint8_t* p, const uint8_t* 
         }
         case NOP_BARRIER:
             if (dry) break;
-            end_pass(cmd);
-            full_barrier(cmd);
+            if (pass_is_open()) {
+                inside_pass_barrier(cmd);
+            } else {
+                full_barrier(cmd);
+            }
             st_barriers++;
             break;
         // ---- work ----

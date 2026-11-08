@@ -2577,6 +2577,10 @@ void end_pass(VkCommandBuffer cmd) {
     pass.prog = 0;
 }
 
+bool pass_is_open() {
+    return pass.open;
+}
+
 const std::vector<uint64_t>& record_progs();
 void record_draw(const NvnState& s, const Program& p, const DrawArgs& d, const Targets& at);
 void probe_draw(const NvnState& s, const Program& p, int pass_draws);
