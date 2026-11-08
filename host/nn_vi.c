@@ -178,8 +178,7 @@ volatile int hos_dynres_runs = 0;   /* (the dynamic path's frames: it fills fiel
 volatile uint32_t hos_fixed_scale_bits = 0x3f800000;   /* (HOS_RES_SCALE: the fixed path's scale) */
 static void realtime_step(int64_t now) {
     int rx_option(int id, int otherwise);
-    /* (Resolution 100% from the start: the fixed path skipped the dynamic block from the first frame, its fields stayed
-       unset and the 3D came out black. The dynamic path runs a few frames first, as when the menu turns it on in game) */
+    const int was_fixed = hos_fixed_resolution;
     hos_fixed_resolution = (!rx_option(2, 1) || getenv("HOS_FIXED_RES") != NULL) && hos_dynres_runs >= 30;
     {   /* (the Insert menu's Resolution: the fixed path's scale, live; HOS_RES_SCALE below stays over it) */
         const int percent = rx_option(3, 0);
@@ -194,6 +193,12 @@ static void realtime_step(int64_t now) {
             read_scale = 1;
             if (getenv("HOS_RES_SCALE")) { float v = (float)atof(getenv("HOS_RES_SCALE")); memcpy((void *)&hos_fixed_scale_bits, &v, 4); }
         }
+    }
+    if (hos_fixed_resolution && !was_fixed) {
+        float cur_scale = 1.0f;
+        memcpy(&cur_scale, (void *)&hos_fixed_scale_bits, 4);
+        hos_log("vi: fixed resolution ACTIVATED after %d dynres runs, scale %.3f (bits 0x%08x)",
+                hos_dynres_runs, cur_scale, hos_fixed_scale_bits);
     }
     const uint64_t mod = hos_gfx_module;
     if (!mod) return;

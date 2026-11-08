@@ -284,6 +284,7 @@ void menu_init() {
     if (const char* e = getenv("RX_VK_UPSCALE")) opts.upscale = atoi(e);
     if (const char* e = getenv("HOS_REALTIME_STEP")) opts.realtime = atoi(e) != 0;
     if (const char* e = getenv("HOS_DYNRES")) opts.resolution = atoi(e) != 0 ? 0 : 1;
+    if (const char* e = getenv("HOS_RESOLUTION")) opts.resolution = std::min(std::max(atoi(e), 0), 4);
 }
 
 bool menu_is_open() { return open_now.load(std::memory_order_relaxed); }

@@ -2141,10 +2141,11 @@ void clear_after_draws(VkCommandBuffer cmd) {
     if (in_pass || !pass.open || pass.draws == 0) return;
     static int logged;
     if (logged++ < 6)
-        logf("vk: a clear after %d draws of its pass (%ux%u, %d colour targets%s, last program %016llx): a pass of its own",
+        logf("vk: a clear after %d draws of its pass (%ux%u, %d colour targets%s, last program %016llx): inside-pass barrier",
              pass.draws, pass.width, pass.height, pass.n, pass.depth ? " + depth" : "", (unsigned long long)pass.prog);
     st_clear_breaks++;
-    end_pass(cmd);
+    inside_pass_barrier(cmd);
+    pass.sampled.clear();
 }
 
 int64_t st_pass_hazards;
@@ -2180,10 +2181,12 @@ uint16_t draw_hazards(VkCommandBuffer cmd, const Program& p, const NvnState& s, 
     if (!kind) return writes;
     static int logged;
     if (logged++ < 8)
-        logf("vk: a draw (program %016llx) %s, after %d draws of the pass (%ux%u): a pass of its own", (unsigned long long)p.key,
+        logf("vk: a draw (program %016llx) %s, after %d draws of the pass (%ux%u): inside-pass barrier", (unsigned long long)p.key,
              kind, pass.draws, pass.width, pass.height);
     st_pass_hazards++;
-    end_pass(cmd);
+    inside_pass_barrier(cmd);
+    pass.written = 0;
+    pass.sampled.clear();
     return writes;
 }
 
@@ -3311,7 +3314,7 @@ bool taau_key(uint64_t key) {
     // locked 60 with this in its place: Hookshot issue 52)
     static const char* keys = getenv("RX_VK_TAAU_KEYS")
                                   ? getenv("RX_VK_TAAU_KEYS")
-                                  : "fd029a317a9a4b94,0775215f8da720e6,72ba090c70fe2614,4f38333932b6953e,f10782f9e58b6a7c,4c2c129fe950b041";
+                                  : "fd029a317a9a4b94,0775215f8da720e6,72ba090c70fe2614,4f38333932b6953e,f10782f9e58b6a7c,4c2c129fe950b041,6676619641320ba7,ee7764a6b1ef459c,383a566958350efe,7b73725ff8212e25,09cc9a93a2d7dd81";
     char hex[24];
     snprintf(hex, sizeof hex, "%016llx", (unsigned long long)key);
     bool match = false;
@@ -3333,7 +3336,7 @@ bool is_taau_prog(const Program& p) {
 bool taau_stand_in(VkCommandBuffer cmd, const NvnState& s, const Program& p) {
     const char* keys = getenv("RX_VK_TAAU_KEYS")
                            ? getenv("RX_VK_TAAU_KEYS")
-                           : "fd029a317a9a4b94,0775215f8da720e6,72ba090c70fe2614,4f38333932b6953e,f10782f9e58b6a7c,4c2c129fe950b041";
+                           : "fd029a317a9a4b94,0775215f8da720e6,72ba090c70fe2614,4f38333932b6953e,f10782f9e58b6a7c,4c2c129fe950b041,6676619641320ba7,ee7764a6b1ef459c,383a566958350efe,7b73725ff8212e25,09cc9a93a2d7dd81";
     if (!is_taau_prog(p) || !dev.push_descriptor || !vkCmdPushDescriptorSetKHR || p.stages.empty()) return false;
     const Stage& st = p.stages[0];
     if (st.info.texture_descriptors.empty() || st.info.image_descriptors.empty()) return false;
