@@ -1564,7 +1564,12 @@ bool mirror_make(Pool& pool) {
         if (mirror_bytes + n > mirror_budget() && n <= max_pool) mirrors_give_back(n);
         uint64_t used = 0, allowed = 0;   // (hookshot: and none while VRAM is nearly full: a mirror is a speed-up, the pool works without)
         const bool tight = vram_usage(&used, &allowed) && allowed && used > allowed / 100 * 92;
-        if (mirror_bytes + n > mirror_budget() || n > max_pool || tight) {
+        if (tight && n <= max_pool && mirror_bytes + n <= mirror_budget() + (256ull << 20)) {
+            texture_evict_vram(n, true);
+        }
+        uint64_t u2 = 0, a2 = 0;
+        const bool still_tight = vram_usage(&u2, &a2) && a2 && u2 > a2 / 100 * 95;
+        if (mirror_bytes + n > mirror_budget() + (256ull << 20) || n > max_pool || still_tight) {
             p->mstate = n > max_pool ? Pool::MIRROR_REFUSED : Pool::MIRROR_NONE;
             static int logged;
             if (logged++ < 8)
