@@ -1386,7 +1386,7 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
     if (is_critical_img) {
         uint64_t used = 0, allowed = 0, bfree = 0;
         if (vram_usage(&used, &allowed, &bfree) && allowed) {
-            const uint64_t cur_budget = (allowed <= (4600ull << 20)) ? (2300ull << 20) : (allowed * 7 / 10);
+            const uint64_t cur_budget = (allowed <= (4600ull << 20)) ? (950ull << 20) : (allowed * 7 / 10);
             if (total_bytes > cur_budget || used > allowed * 85 / 100) {
                 texture_evict_vram(0, false);
             }
@@ -2591,7 +2591,7 @@ void texture_evict_vram(uint64_t needed_bytes, bool force) {
     if (!own)
         own = getenv("RX_VK_VRAM_MB") ? (uint64_t)atoi(getenv("RX_VK_VRAM_MB")) << 20
               : known                ? (allowed <= (4600ull << 20)
-                                            ? 2300ull << 20
+                                            ? 950ull << 20
                                             : std::min<uint64_t>(allowed / 10 * 7, 6144ull << 20))
                                      : 4096ull << 20;
     uint64_t budget = own;
