@@ -1204,7 +1204,7 @@ uint64_t mirror_budget() {
         uint64_t vram = 0;
         for (uint32_t h = 0; h < dev.memory.memoryHeapCount; h++)
             if (dev.memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) vram = std::max(vram, (uint64_t)dev.memory.memoryHeaps[h].size);
-        if (vram && vram <= (4600ull << 20)) return (uint64_t)(800ull << 20);
+        if (vram && vram <= (4600ull << 20)) return (uint64_t)(1600ull << 20);
         return vram ? std::min<uint64_t>(vram / 4, 3072ull << 20) : (uint64_t)(3072ull << 20);
     }();
     return b;
@@ -1468,7 +1468,7 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
 // stayed in system memory for good (the GPU read them over PCIe). Now a retired pool's mirror goes once the GPU is done
 // with the submissions that bound it; a mirror not bound for kIdleEpochs submissions goes when a wanted one does not
 // fit, or after kLongIdle; and a pool refused for the budget is tried again when it is next bound.
-constexpr uint64_t kIdleEpochs = 60, kLongIdle = 240;
+constexpr uint64_t kIdleEpochs = 480, kLongIdle = 1200;
 int64_t st_mirrors_freed = 0;
 uint64_t st_mirror_bytes_freed = 0;
 void mirror_free(Pool& p) {
@@ -1495,7 +1495,7 @@ void mirrors_give_back(uint64_t want_bytes) {   // (pools_mu held)
     }
     std::vector<Pool*> idle;
     for (auto& [lo, p] : imported)
-        if (p.mstate == Pool::MIRROR_ON && mirror_epoch - p.bound_epoch > (want_bytes ? 15 : kIdleEpochs) && p.last_value <= mem_completed)
+        if (p.mstate == Pool::MIRROR_ON && mirror_epoch - p.bound_epoch > (want_bytes ? 120 : kIdleEpochs) && p.last_value <= mem_completed)
             idle.push_back(&p);
     std::sort(idle.begin(), idle.end(), [](const Pool* a, const Pool* b) { return a->bound_epoch < b->bound_epoch; });
     for (Pool* p : idle) {
